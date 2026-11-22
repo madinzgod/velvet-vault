@@ -1,10 +1,12 @@
 // render.js — everything the player (and the screenshot judge) sees.
-// The hall is a moody night museum: polished marble under warm
-// spotlight pools, a crimson carpet between brass ropes, paneled
-// walls with paintings, glass display cases holding distinct
-// artifacts, and drawn character sprites — no flat shapes. The
-// static architecture is painted once onto an offscreen canvas;
-// cones, cases, actors and HUD are drawn fresh each frame.
+// v3 changes the art model, not just the detail count: the hall is
+// drawn as a 2.5D room. Characters are upright figures with heads,
+// torsos and legs; display cases are physical boxes with a front
+// face, a glass top, and an artifact that stands LARGE inside; statue
+// plinths and pillars rise off the floor and cast shadows. The static
+// architecture is painted once onto an offscreen canvas; furniture,
+// cones, actors and HUD are drawn fresh each frame, depth-sorted by
+// their south edge so figures pass behind tall furniture correctly.
 
 import { VIEW_W, VIEW_H, HUD_H } from './level.js';
 import { conePolygon } from './vision.js';
@@ -14,12 +16,11 @@ const GOLD = '#d9a441';
 const GOLD_DK = '#8a6d2f';
 const CREAM = '#f3e9d2';
 
-// Deterministic 0..1 hash of integer coords, for marble speckle and
-// tile tone variation that never flickers between frames.
+// Deterministic 0..1 hash of integer coords, for marble speckle,
+// veins and tile tone variation that never flickers between frames.
 function hash2(x, y) {
-  let h = (x * 374761393 + y * 668265263) ^ 0x5bf03635;
-  h = (h ^ (h >> 13)) * 1274126177;
-  return ((h ^ (h >> 16)) >>> 0) / 4294967295;
+  const h = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+  return h - Math.floor(h);
 }
 
 function rr(ctx, x, y, w, h, r) {
@@ -33,471 +34,30 @@ function rr(ctx, x, y, w, h, r) {
 }
 
 function shadowEllipse(ctx, x, y, rx, ry, alpha = 0.4) {
+  ctx.save();
   ctx.fillStyle = `rgba(0,0,0,${alpha})`;
   ctx.beginPath();
   ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
 }
 
 function sparkle(ctx, x, y, r, alpha) {
   ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  ctx.moveTo(x, y - r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.quadraticCurveTo(x, y, x, y + r);
-  ctx.quadraticCurveTo(x, y, x - r, y);
-  ctx.quadraticCurveTo(x, y, x, y - r);
-  ctx.fill();
-  ctx.restore();
-}
-
-// --- The static hall ------------------------------------------------
-
-function paintMarble(ctx, x0, y0, x1, y1) {
-  const t = 128;
-  for (let ty = Math.floor(y0 / t); ty * t < y1; ty++) {
-    for (let tx = Math.floor(x0 / t); tx * t < x1; tx++) {
-      const h = hash2(tx, ty);
-      const base = (tx + ty) % 2 === 0 ? 0 : 1;
-      const l = (base ? 23 : 20.5) + h * 3.5;
-      ctx.fillStyle = `hsl(232, 16%, ${l}%)`;
-      ctx.fillRect(tx * t, ty * t, t, t);
-      // Faint mineral veins: two short strokes per tile.
-      ctx.strokeStyle = 'rgba(200,205,230,0.05)';
-      ctx.lineWidth = 1.4;
-      const vx = tx * t + h * 90;
-      const vy = ty * t + hash2(ty, tx) * 90;
-      ctx.beginPath();
-      ctx.moveTo(vx, vy);
-      ctx.lineTo(vx + 26 + h * 22, vy + 9);
-      ctx.lineTo(vx + 44 + h * 26, vy + 4);
-      ctx.stroke();
-      // Speckle.
-      ctx.fillStyle = 'rgba(255,255,255,0.05)';
-      for (let i = 0; i < 9; i++) {
-        const sx = tx * t + hash2(tx * 31 + i, ty * 17) * t;
-        const sy = ty * t + hash2(tx * 13, ty * 29 + i) * t;
-        ctx.fillRect(sx, sy, 1.6, 1.6);
-      }
-    }
-  }
-  // Grout lines.
-  ctx.strokeStyle = 'rgba(8,9,16,0.85)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  for (let x = 0; x <= VIEW_W; x += t) { ctx.moveTo(x, y0); ctx.lineTo(x, y1); }
-  for (let y = y0; y <= y1; y += t) { ctx.moveTo(x0, y); ctx.lineTo(x1, y); }
-  ctx.stroke();
-  // A broad cool sheen sweeping the stone.
-  const sheen = ctx.createLinearGradient(0, y0, VIEW_W, y1);
-  sheen.addColorStop(0, 'rgba(160,180,255,0.05)');
-  sheen.addColorStop(0.5, 'rgba(160,180,255,0)');
-  sheen.addColorStop(1, 'rgba(160,180,255,0.04)');
-  ctx.fillStyle = sheen;
-  ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
-}
-
-function paintPainting(ctx, cx, cy, w, h, scene) {
-  // Gilded frame with an inner bevel, then the little canvas.
-  const x = cx - w / 2;
-  const y = cy - h / 2;
-  const fg = ctx.createLinearGradient(x, y, x + w, y + h);
-  fg.addColorStop(0, '#e8bc62');
-  fg.addColorStop(0.5, '#9a742f');
-  fg.addColorStop(1, '#d9a441');
-  ctx.fillStyle = fg;
-  rr(ctx, x - 3, y - 3, w + 6, h + 6, 3);
-  ctx.fill();
-  ctx.fillStyle = '#241a10';
-  ctx.fillRect(x, y, w, h);
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(x + 3, y + 3, w - 6, h - 6);
-  ctx.clip();
-  const ix = x + 3;
-  const iy = y + 3;
-  const iw = w - 6;
-  const ih = h - 6;
-  if (scene === 'landscape') {
-    const sky = ctx.createLinearGradient(0, iy, 0, iy + ih);
-    sky.addColorStop(0, '#e8a56b');
-    sky.addColorStop(0.6, '#b45a48');
-    sky.addColorStop(1, '#5d2f3d');
-    ctx.fillStyle = sky;
-    ctx.fillRect(ix, iy, iw, ih);
-    ctx.fillStyle = '#ffd98a';
-    ctx.beginPath();
-    ctx.arc(ix + iw * 0.68, iy + ih * 0.42, ih * 0.16, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#3d2438';
-    ctx.beginPath();
-    ctx.moveTo(ix, iy + ih * 0.78);
-    ctx.quadraticCurveTo(ix + iw * 0.3, iy + ih * 0.52, ix + iw * 0.55, iy + ih * 0.74);
-    ctx.quadraticCurveTo(ix + iw * 0.8, iy + ih * 0.9, ix + iw, iy + ih * 0.7);
-    ctx.lineTo(ix + iw, iy + ih);
-    ctx.lineTo(ix, iy + ih);
-    ctx.fill();
-  } else if (scene === 'seascape') {
-    const sea = ctx.createLinearGradient(0, iy, 0, iy + ih);
-    sea.addColorStop(0, '#cfd8ea');
-    sea.addColorStop(0.45, '#5f7ea6');
-    sea.addColorStop(1, '#1d3350');
-    ctx.fillStyle = sea;
-    ctx.fillRect(ix, iy, iw, ih);
-    ctx.fillStyle = '#f4f0dc';
-    ctx.beginPath();
-    ctx.arc(ix + iw * 0.24, iy + ih * 0.3, ih * 0.14, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(240,246,255,0.75)';
-    ctx.lineWidth = 1.4;
-    for (let i = 0; i < 3; i++) {
-      ctx.beginPath();
-      ctx.arc(ix + iw * (0.3 + i * 0.22), iy + ih * (0.62 + i * 0.1), iw * 0.09, Math.PI * 1.1, Math.PI * 1.9);
-      ctx.stroke();
-    }
-  } else {
-    // Portrait: umber backdrop, a pale bust silhouette.
-    const bg = ctx.createRadialGradient(cx, cy, 2, cx, cy, iw * 0.7);
-    bg.addColorStop(0, '#7a5230');
-    bg.addColorStop(1, '#2a1a10');
-    ctx.fillStyle = bg;
-    ctx.fillRect(ix, iy, iw, ih);
-    ctx.fillStyle = '#d8c49a';
-    ctx.beginPath();
-    ctx.arc(cx, iy + ih * 0.4, ih * 0.17, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(cx, iy + ih * 0.92, iw * 0.26, ih * 0.3, 0, Math.PI, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(60,35,15,0.5)';
-    ctx.beginPath();
-    ctx.arc(cx + iw * 0.05, iy + ih * 0.38, ih * 0.15, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-  // Glass glint.
-  ctx.fillStyle = 'rgba(255,255,255,0.07)';
-  ctx.beginPath();
-  ctx.moveTo(x + w * 0.12, y + h);
-  ctx.lineTo(x + w * 0.42, y);
-  ctx.lineTo(x + w * 0.6, y);
-  ctx.lineTo(x + w * 0.3, y + h);
-  ctx.fill();
-}
-
-function paintPlant(ctx, px, py) {
-  shadowEllipse(ctx, px, py + 10, 20, 6, 0.35);
-  // Terracotta pot.
-  const pg = ctx.createLinearGradient(px - 11, 0, px + 11, 0);
-  pg.addColorStop(0, '#5d2f1e');
-  pg.addColorStop(0.5, '#a85f36');
-  pg.addColorStop(1, '#4a2415');
-  ctx.fillStyle = pg;
-  ctx.beginPath();
-  ctx.moveTo(px - 10, py - 2);
-  ctx.lineTo(px + 10, py - 2);
-  ctx.lineTo(px + 7, py + 12);
-  ctx.lineTo(px - 7, py + 12);
-  ctx.closePath();
-  ctx.fill();
-  ctx.fillStyle = '#c47a48';
-  ctx.fillRect(px - 11, py - 5, 22, 4);
-  // Layered leaves: three fans of ellipses, dark to light.
-  const leaf = (ang, len, wid, col) => {
-    ctx.save();
-    ctx.translate(px, py - 4);
-    ctx.rotate(ang);
-    ctx.fillStyle = col;
-    ctx.beginPath();
-    ctx.ellipse(len / 2, 0, len / 2, wid, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  };
-  for (let i = 0; i < 7; i++) leaf(-2.6 + i * 0.42, 24, 5.5, '#1d4423');
-  for (let i = 0; i < 6; i++) leaf(-2.4 + i * 0.45, 19, 4.6, '#2c6b34');
-  for (let i = 0; i < 5; i++) leaf(-2.2 + i * 0.5, 13, 3.6, '#3f9150');
-}
-
-function buildStatic(game) {
-  const { level } = game;
-  const cv = document.createElement('canvas');
-  cv.width = VIEW_W;
-  cv.height = VIEW_H;
-  const ctx = cv.getContext('2d');
-  const D = level.decor;
-
-  // Marble everywhere under the hall.
-  paintMarble(ctx, 0, HUD_H, VIEW_W, VIEW_H);
-
-  // The vault's darker steel floor, with a fine grid and the gold
-  // ring around the pedestal.
-  const vf = level.vaultFloor;
-  ctx.fillStyle = '#1b1c26';
-  ctx.fillRect(vf.x, vf.y, vf.w, vf.h);
-  ctx.strokeStyle = 'rgba(120,128,160,0.10)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = vf.x; x <= vf.x + vf.w; x += 32) { ctx.moveTo(x, vf.y); ctx.lineTo(x, vf.y + vf.h); }
-  for (let y = vf.y; y <= vf.y + vf.h; y += 32) { ctx.moveTo(vf.x, y); ctx.lineTo(vf.x + vf.w, y); }
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(217,164,65,0.55)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(level.loot.x, level.loot.y, 54, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(217,164,65,0.22)';
-  ctx.beginPath();
-  ctx.arc(level.loot.x, level.loot.y, 62, 0, Math.PI * 2);
-  ctx.stroke();
-
-  // Marble inlay medallion in the west hall.
-  const m = D.medallion;
-  ctx.strokeStyle = 'rgba(217,164,65,0.20)';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(217,164,65,0.13)';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.arc(m.x, m.y, m.r - 10, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.save();
-  ctx.translate(m.x, m.y);
-  ctx.rotate(Math.PI / 4);
-  ctx.strokeStyle = 'rgba(217,164,65,0.15)';
-  ctx.strokeRect(-m.r * 0.52, -m.r * 0.52, m.r * 1.04, m.r * 1.04);
-  ctx.restore();
-
-  // The crimson carpet runner: bordered, patterned, fringed.
-  const c = level.carpet;
-  const cg = ctx.createLinearGradient(c.x, 0, c.x + c.w, 0);
-  cg.addColorStop(0, '#4d0f1d');
-  cg.addColorStop(0.5, '#77182b');
-  cg.addColorStop(1, '#4d0f1d');
-  ctx.fillStyle = cg;
-  ctx.fillRect(c.x, c.y, c.w, c.h);
-  ctx.strokeStyle = GOLD;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(c.x + 4, c.y + 4, c.w - 8, c.h - 8);
-  ctx.strokeStyle = 'rgba(217,164,65,0.45)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(c.x + 9, c.y + 9, c.w - 18, c.h - 18);
-  ctx.fillStyle = 'rgba(232,188,98,0.5)';
-  for (let y = c.y + 30; y < c.y + c.h - 14; y += 42) {
-    ctx.save();
-    ctx.translate(c.x + c.w / 2, y);
-    ctx.rotate(Math.PI / 4);
-    ctx.fillRect(-4.5, -4.5, 9, 9);
-    ctx.restore();
-  }
-  ctx.fillStyle = 'rgba(232,188,98,0.35)';
-  for (let x = c.x + 6; x < c.x + c.w - 4; x += 7) {
-    ctx.fillRect(x, c.y + c.h - 3, 3, 6);
-  }
-
-  // Warm spotlight pools over every case, the pedestal, the carpet.
-  const pool = (x, y, r, a) => {
-    const g = ctx.createRadialGradient(x, y, 4, x, y, r);
-    g.addColorStop(0, `rgba(255,196,110,${a})`);
-    g.addColorStop(1, 'rgba(255,196,110,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
-  };
-  for (const s of level.solids) {
-    if (s.kind === 'case') pool(s.x + s.w / 2, s.y + s.h / 2, 115, 0.21);
-  }
-  pool(level.loot.x, level.loot.y, 140, 0.23);
-  pool(c.x + c.w / 2, 560, 200, 0.09);
-  // A broad warm ambient wash so the stone never reads as void.
-  const amb = ctx.createRadialGradient(640, 430, 120, 640, 430, 760);
-  amb.addColorStop(0, 'rgba(255,190,110,0.07)');
-  amb.addColorStop(1, 'rgba(255,190,110,0)');
-  ctx.fillStyle = amb;
-  ctx.fillRect(0, HUD_H, VIEW_W, VIEW_H - HUD_H);
-
-  // --- Walls -------------------------------------------------------
-  // North wall face: a tall paneled surface carrying paintings,
-  // pilasters and sconces, so the top of the hall has real height.
-  const face = ctx.createLinearGradient(0, HUD_H, 0, 122);
-  face.addColorStop(0, '#272c49');
-  face.addColorStop(0.8, '#1a1e35');
-  face.addColorStop(1, '#12152a');
-  ctx.fillStyle = face;
-  ctx.fillRect(0, HUD_H, VIEW_W, 58);
-  ctx.fillStyle = 'rgba(217,164,65,0.65)';
-  ctx.fillRect(0, 120, VIEW_W, 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(0, 122, VIEW_W, 5);
-  // Panel insets along the face.
-  ctx.strokeStyle = 'rgba(140,150,200,0.16)';
-  ctx.lineWidth = 1;
-  for (let x = 18; x < VIEW_W - 60; x += 64) {
-    ctx.strokeRect(x, HUD_H + 8, 52, 42);
-  }
-  for (const px of D.pilastersTop) {
-    const pg = ctx.createLinearGradient(px, 0, px + 26, 0);
-    pg.addColorStop(0, '#1c2138');
-    pg.addColorStop(0.5, '#333a5e');
-    pg.addColorStop(1, '#171b30');
-    ctx.fillStyle = pg;
-    ctx.fillRect(px, HUD_H, 26, 58);
-    ctx.fillStyle = '#3d4570';
-    ctx.fillRect(px - 2, HUD_H, 30, 6);
-    ctx.fillRect(px - 2, 112, 30, 7);
-    ctx.fillStyle = 'rgba(217,164,65,0.5)';
-    ctx.fillRect(px - 2, HUD_H + 6, 30, 1.5);
-  }
-  for (const p of D.paintings) paintPainting(ctx, p.x, 92, 74, 42, p.scene);
-  // Sconces between the paintings: a gold stem and a warm glow.
-  for (const sx of [280, 474]) {
-    const g = ctx.createRadialGradient(sx + 13, 92, 1, sx + 13, 92, 26);
-    g.addColorStop(0, 'rgba(255,205,120,0.5)');
-    g.addColorStop(1, 'rgba(255,205,120,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(sx + 13, 92, 26, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffd98a';
-    ctx.beginPath();
-    ctx.arc(sx + 13, 92, 3, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // The remaining wall bands: dark paneled stone with a gold chair
-  // rail and a skirting shadow where wall meets floor.
-  const band = (x, y, w, h, horiz) => {
-    ctx.fillStyle = '#1d2138';
-    ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = 'rgba(217,164,65,0.4)';
-    if (horiz) ctx.fillRect(x, y + h / 2 - 1, w, 2);
-    else ctx.fillRect(x + w / 2 - 1, y, 2, h);
-    ctx.strokeStyle = 'rgba(140,150,200,0.14)';
-    ctx.lineWidth = 1;
-    if (horiz) {
-      for (let px = x + 14; px < x + w - 30; px += 58) ctx.strokeRect(px, y + 4, 44, h - 8);
-    } else {
-      for (let py = y + 14; py < y + h - 30; py += 58) ctx.strokeRect(x + 4, py, w - 8, 44);
-    }
-  };
-  band(0, 776, VIEW_W, 24, true);
-  band(0, HUD_H, 24, 736, false);
-  band(1256, HUD_H, 24, 736, false);
-  // Floor shadow under the south and side walls.
-  ctx.fillStyle = 'rgba(0,0,0,0.30)';
-  ctx.fillRect(24, 770, VIEW_W - 48, 6);
-  ctx.fillRect(24, 122, 5, 654);
-  ctx.fillRect(1251, 122, 5, 654);
-
-  // Vault chamber walls: riveted, paneled steel-burgundy.
-  for (const s of level.solids) {
-    if (s.kind !== 'vault') continue;
-    ctx.fillStyle = '#2c1e2e';
-    ctx.fillRect(s.x, s.y, s.w, s.h);
-    ctx.fillStyle = 'rgba(217,164,65,0.4)';
-    if (s.w > s.h) ctx.fillRect(s.x, s.y + s.h / 2 - 1, s.w, 2);
-    else ctx.fillRect(s.x + s.w / 2 - 1, s.y, 2, s.h);
-    ctx.fillStyle = 'rgba(220,190,220,0.5)';
-    const n = Math.floor((s.w > s.h ? s.w : s.h) / 34);
-    for (let i = 1; i <= n; i++) {
-      const rx = s.w > s.h ? s.x + (s.w * i) / (n + 1) : s.x + s.w / 2;
-      const ry = s.w > s.h ? s.y + s.h / 2 : s.y + (s.h * i) / (n + 1);
-      ctx.beginPath();
-      ctx.arc(rx, ry + (s.w > s.h ? -5 : 0), 1.6, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-  // Small paintings on the vault's inner north face.
-  for (const p of D.vaultPaintings) paintPainting(ctx, p.x, 152, 56, 32, p.scene);
-
-  // Benches: slatted walnut with iron legs.
-  for (const b of D.benches) {
-    shadowEllipse(ctx, b.x + b.w / 2, b.y + b.h + 3, b.w / 2, 5, 0.3);
-    ctx.fillStyle = '#17130f';
-    ctx.fillRect(b.x + 8, b.y + b.h - 4, 6, 6);
-    ctx.fillRect(b.x + b.w - 14, b.y + b.h - 4, 6, 6);
-    const bg = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
-    bg.addColorStop(0, '#6b4226');
-    bg.addColorStop(1, '#3c2412');
-    ctx.fillStyle = bg;
-    rr(ctx, b.x, b.y, b.w, b.h, 4);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(20,10,4,0.65)';
-    ctx.lineWidth = 1.5;
-    for (let i = 1; i < 4; i++) {
-      ctx.beginPath();
-      ctx.moveTo(b.x + 4, b.y + (b.h * i) / 4);
-      ctx.lineTo(b.x + b.w - 4, b.y + (b.h * i) / 4);
-      ctx.stroke();
-    }
-    ctx.strokeStyle = 'rgba(232,188,98,0.35)';
-    ctx.lineWidth = 1;
-    rr(ctx, b.x, b.y, b.w, b.h, 4);
-    ctx.stroke();
-  }
-
-  // Brass rope barriers flanking the carpet.
-  const posts = D.ropePosts;
-  ctx.strokeStyle = '#5d1220';
-  ctx.lineWidth = 4;
-  for (const sideX of [c.x - 15, c.x + c.w + 15]) {
-    for (let i = 0; i < posts.length - 1; i++) {
-      ctx.beginPath();
-      ctx.moveTo(sideX, posts[i]);
-      ctx.quadraticCurveTo(sideX, (posts[i] + posts[i + 1]) / 2 + 13, sideX, posts[i + 1]);
-      ctx.stroke();
-    }
-  }
-  ctx.strokeStyle = 'rgba(255,120,140,0.35)';
+  ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
   ctx.lineWidth = 1.4;
-  for (const sideX of [c.x - 15, c.x + c.w + 15]) {
-    for (let i = 0; i < posts.length - 1; i++) {
-      ctx.beginPath();
-      ctx.moveTo(sideX, posts[i] - 1.5);
-      ctx.quadraticCurveTo(sideX, (posts[i] + posts[i + 1]) / 2 + 11, sideX, posts[i + 1] - 1.5);
-      ctx.stroke();
-    }
-  }
-  for (const sideX of [c.x - 15, c.x + c.w + 15]) {
-    for (const py of posts) {
-      shadowEllipse(ctx, sideX, py + 4, 7, 3, 0.35);
-      const bg2 = ctx.createRadialGradient(sideX - 2, py - 6, 1, sideX, py - 3, 7);
-      bg2.addColorStop(0, '#ffe9a8');
-      bg2.addColorStop(0.6, '#c9973f');
-      bg2.addColorStop(1, '#7c5a1e');
-      ctx.fillStyle = bg2;
-      ctx.beginPath();
-      ctx.arc(sideX, py - 3, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#8a6d2f';
-      ctx.fillRect(sideX - 1.5, py - 3, 3, 8);
-      ctx.beginPath();
-      ctx.ellipse(sideX, py + 6, 6, 2.4, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  for (const p of D.plants) paintPlant(ctx, p.x, p.y);
-  return cv;
+  ctx.beginPath();
+  ctx.moveTo(x - r, y);
+  ctx.lineTo(x + r, y);
+  ctx.moveTo(x, y - r);
+  ctx.lineTo(x, y + r);
+  ctx.stroke();
+  ctx.restore();
 }
 
-// --- Artifacts under glass -------------------------------------------
-// Each painter draws centred on (cx, cy) inside a case interior,
-// roughly 30px tall. Deliberately distinct silhouettes and palettes
-// so a screenshot reads as a furnished museum, not a grid of boxes.
-
-function goldGrad(ctx, x, y, r) {
-  const g = ctx.createRadialGradient(x - r * 0.4, y - r * 0.4, 1, x, y, r * 1.3);
-  g.addColorStop(0, '#ffe9a8');
-  g.addColorStop(0.55, '#d9a441');
-  g.addColorStop(1, '#7c5a1e');
-  return g;
-}
-
+// A faceted gem centred on (x, y); s scales the ~23px unit drawing.
+// Shared by the HUD mark, the artifact painters and the Aurora
+// Diamond itself.
 function drawDiamondGem(ctx, x, y, s, cTop, cMid, cDeep) {
   ctx.save();
   ctx.translate(x, y);
@@ -541,504 +101,1099 @@ function drawDiamondGem(ctx, x, y, s, cTop, cMid, cDeep) {
   ctx.restore();
 }
 
-const ARTIFACTS = {
-  vase(ctx, x, y) {
-    ctx.fillStyle = goldGrad(ctx, x, y, 13);
-    ctx.beginPath();
-    ctx.moveTo(x - 3.5, y - 13);
-    ctx.lineTo(x + 3.5, y - 13);
-    ctx.quadraticCurveTo(x + 4, y - 7, x + 8.5, y - 1);
-    ctx.quadraticCurveTo(x + 11, y + 7, x + 5, y + 12);
-    ctx.lineTo(x - 5, y + 12);
-    ctx.quadraticCurveTo(x - 11, y + 7, x - 8.5, y - 1);
-    ctx.quadraticCurveTo(x - 4, y - 7, x - 3.5, y - 13);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(90,60,10,0.6)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(x - 9.5, y - 4, 3.4, Math.PI * 0.4, Math.PI * 1.5);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(x + 9.5, y - 4, 3.4, Math.PI * 1.5, Math.PI * 0.6, true);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,244,200,0.75)';
-    ctx.fillRect(x - 5.5, y - 14.5, 11, 2.4);
-    ctx.fillStyle = 'rgba(120,30,40,0.8)';
-    ctx.fillRect(x - 6, y + 1, 12, 2.6);
-  },
-  urn(ctx, x, y) {
-    const g = ctx.createRadialGradient(x - 4, y - 5, 1, x, y, 15);
-    g.addColorStop(0, '#eef2f7');
-    g.addColorStop(0.55, '#9fb2c8');
-    g.addColorStop(1, '#4c5f78');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.moveTo(x - 8, y - 6);
-    ctx.quadraticCurveTo(x, y - 15, x + 8, y - 6);
-    ctx.quadraticCurveTo(x + 10, y + 5, x + 5.5, y + 11);
-    ctx.lineTo(x - 5.5, y + 11);
-    ctx.quadraticCurveTo(x - 10, y + 5, x - 8, y - 6);
-    ctx.fill();
-    ctx.fillStyle = '#7186a0';
-    ctx.fillRect(x - 4, y + 11, 8, 2.6);
-    ctx.fillStyle = '#dfe8f2';
-    ctx.beginPath();
-    ctx.arc(x, y - 13.5, 2.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(40,60,90,0.55)';
-    ctx.beginPath();
-    ctx.moveTo(x - 7.5, y + 2);
-    ctx.lineTo(x + 7.5, y + 2);
-    ctx.stroke();
-  },
-  crown(ctx, x, y) {
-    ctx.fillStyle = goldGrad(ctx, x, y, 14);
-    ctx.beginPath();
-    ctx.moveTo(x - 12, y + 9);
-    ctx.lineTo(x - 12, y - 7);
-    ctx.lineTo(x - 6, y + 1);
-    ctx.lineTo(x - 3, y - 10);
-    ctx.lineTo(x, y + 1);
-    ctx.lineTo(x + 3, y - 10);
-    ctx.lineTo(x + 6, y + 1);
-    ctx.lineTo(x + 12, y - 7);
-    ctx.lineTo(x + 12, y + 9);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(90,60,10,0.55)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    const gems = [['#e33', -7.5], ['#3af', 0], ['#3d6', 7.5]];
-    for (const [col, dx] of gems) {
-      ctx.fillStyle = col;
+// --- The static hall ------------------------------------------------
+
+// Large marble slabs with veins that wander across the grout lines,
+// so the floor reads as stone, not as a grid of identical tiles.
+function paintSlabs(ctx, x0, y0, x1, y1, sw, sh, tones, grout) {
+  ctx.fillStyle = grout;
+  ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+  let row = 0;
+  for (let y = y0; y < y1; y += sh, row++) {
+    const off = row % 2 ? -sw / 2 : 0;
+    let col = 0;
+    for (let x = x0 + off; x < x1; x += sw, col++) {
+      const t = tones[Math.floor(hash2(col * 3 + row, row * 7 + col) * tones.length)];
+      ctx.fillStyle = t;
+      ctx.fillRect(x + 1.5, y + 1.5, sw - 3, sh - 3);
+      // Speckle.
+      ctx.fillStyle = 'rgba(255,255,255,0.05)';
+      for (let i = 0; i < 6; i++) {
+        const sx = x + hash2(col * 31 + i, row * 17 + i) * sw;
+        const sy = y + hash2(col * 13 + i, row * 29 + i) * sh;
+        ctx.fillRect(sx, sy, 1.6, 1.6);
+      }
+      // One wandering vein per slab.
+      const vx = x + hash2(col, row) * sw * 0.7;
+      const vy = y + hash2(row, col) * sh * 0.5;
+      ctx.strokeStyle = 'rgba(215,220,235,0.06)';
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.arc(x + dx, y + 4.5, 2.1, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.fillStyle = '#ffe9a8';
-    for (const dx of [-12, -3, 3, 12]) {
-      ctx.beginPath();
-      ctx.arc(x + dx, y - (dx === -3 || dx === 3 ? 11.5 : 8.5), 1.7, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  },
-  mask(ctx, x, y) {
-    ctx.fillStyle = goldGrad(ctx, x, y, 13);
-    ctx.beginPath();
-    ctx.ellipse(x, y, 9, 12.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(90,60,10,0.6)';
-    ctx.stroke();
-    ctx.fillStyle = '#1a1206';
-    ctx.beginPath();
-    ctx.ellipse(x - 3.8, y - 2.5, 2.3, 1.3, -0.25, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(x + 3.8, y - 2.5, 2.3, 1.3, 0.25, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(90,60,10,0.7)';
-    ctx.lineWidth = 1.1;
-    ctx.beginPath();
-    ctx.moveTo(x, y - 0.5);
-    ctx.lineTo(x - 1, y + 4);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(x, y + 5.5, 3.4, Math.PI * 0.25, Math.PI * 0.75);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(x, y - 6, 6.4, Math.PI * 1.15, Math.PI * 1.85);
-    ctx.stroke();
-  },
-  bust(ctx, x, y) {
-    ctx.fillStyle = '#5a4632';
-    ctx.fillRect(x - 6, y + 8, 12, 5);
-    const g = ctx.createLinearGradient(x - 9, 0, x + 9, 0);
-    g.addColorStop(0, '#8f867a');
-    g.addColorStop(0.45, '#e6ded0');
-    g.addColorStop(1, '#7c7466');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(x, y - 4.5, 6.4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(x, y + 8.5, 10, 6, 0, Math.PI, Math.PI * 2);
-    ctx.fill();
-    ctx.fillRect(x - 10, y + 8, 20, 1.6);
-    ctx.fillStyle = 'rgba(70,60,50,0.45)';
-    ctx.beginPath();
-    ctx.arc(x + 2.6, y - 5.5, 5.4, 0, Math.PI * 2);
-    ctx.fill();
-  },
-  globe(ctx, x, y) {
-    ctx.strokeStyle = '#6b4a2a';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(x, y + 3);
-    ctx.lineTo(x, y + 11);
-    ctx.stroke();
-    ctx.fillStyle = '#54381e';
-    ctx.fillRect(x - 6, y + 11, 12, 2.6);
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(x, y - 3, 10.5, 0, Math.PI * 2);
-    ctx.clip();
-    const g = ctx.createRadialGradient(x - 3, y - 7, 1, x, y - 3, 12);
-    g.addColorStop(0, '#7cc7d9');
-    g.addColorStop(1, '#1f5f7a');
-    ctx.fillStyle = g;
-    ctx.fillRect(x - 11, y - 14, 22, 22);
-    ctx.fillStyle = '#7fae5a';
-    ctx.beginPath();
-    ctx.ellipse(x - 3.5, y - 6, 4.4, 3, 0.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(x + 4.5, y + 0.5, 3.4, 2.4, -0.4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(240,250,255,0.5)';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.ellipse(x, y - 3, 4.6, 10.5, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-    ctx.strokeStyle = 'rgba(230,245,255,0.65)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(x, y - 3, 10.5, 0, Math.PI * 2);
-    ctx.stroke();
-  },
-  chalice(ctx, x, y) {
-    ctx.fillStyle = goldGrad(ctx, x, y, 12);
-    ctx.beginPath();
-    ctx.moveTo(x - 9, y - 11);
-    ctx.lineTo(x + 9, y - 11);
-    ctx.quadraticCurveTo(x + 8, y + 1, x + 2.2, y + 2.5);
-    ctx.lineTo(x + 2.2, y + 7);
-    ctx.lineTo(x + 6.5, y + 11);
-    ctx.lineTo(x + 6.5, y + 13);
-    ctx.lineTo(x - 6.5, y + 13);
-    ctx.lineTo(x - 6.5, y + 11);
-    ctx.lineTo(x - 2.2, y + 7);
-    ctx.lineTo(x - 2.2, y + 2.5);
-    ctx.quadraticCurveTo(x - 8, y + 1, x - 9, y - 11);
-    ctx.fill();
-    ctx.fillStyle = '#8c2434';
-    ctx.beginPath();
-    ctx.ellipse(x, y - 11, 9, 2.4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#3af';
-    ctx.beginPath();
-    ctx.arc(x, y - 3, 2, 0, Math.PI * 2);
-    ctx.fill();
-  },
-  gems(ctx, x, y, time) {
-    drawDiamondGem(ctx, x - 8, y + 3, 0.8, '#c9f2ff', '#38bdf8', '#1d6fb8');
-    drawDiamondGem(ctx, x + 8, y + 4, 0.66, '#ffd3dd', '#fb7185', '#b02a44');
-    drawDiamondGem(ctx, x + 1, y - 5, 0.6, '#ffedb0', '#f5b93f', '#a86e14');
-    sparkle(ctx, x - 12, y - 8, 5, 0.5 + 0.3 * Math.sin(time * 3.1));
-    sparkle(ctx, x + 13, y - 4, 4, 0.4 + 0.3 * Math.sin(time * 3.1 + 2));
-  },
-  ruby(ctx, x, y, time) {
-    drawDiamondGem(ctx, x, y, 1.25, '#ffb3c0', '#e02444', '#7c0f26');
-    sparkle(ctx, x - 9, y - 10, 5.5, 0.55 + 0.3 * Math.sin(time * 2.6));
-  },
-  coins(ctx, x, y) {
-    ctx.fillStyle = '#a86e14';
-    for (let row = 0; row < 3; row++) {
-      const w = 15 - row * 3.4;
-      ctx.beginPath();
-      ctx.ellipse(x, y + 8 - row * 3.6, w, 3.1, 0, 0, Math.PI * 2);
-      ctx.fillStyle = row % 2 ? '#c9973f' : '#e3b34e';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(90,60,10,0.5)';
-      ctx.lineWidth = 0.8;
+      ctx.moveTo(vx, vy);
+      ctx.lineTo(vx + 26 + hash2(col + 9, row) * 30, vy + 12);
+      ctx.lineTo(vx + 44 + hash2(col, row + 9) * 40, vy + 30 + hash2(col + 4, row + 4) * 22);
       ctx.stroke();
     }
-    ctx.fillStyle = '#ffe9a8';
-    ctx.beginPath();
-    ctx.arc(x - 11, y + 2, 3.4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#a86e14';
-    ctx.stroke();
-    ctx.fillStyle = '#f5b93f';
-    ctx.beginPath();
-    ctx.arc(x + 11.5, y + 5, 3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  },
-  easel(ctx, x, y) {
-    ctx.strokeStyle = '#4a2f18';
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.moveTo(x - 8, y + 13);
-    ctx.lineTo(x, y - 12);
-    ctx.lineTo(x + 8, y + 13);
-    ctx.moveTo(x - 5.5, y + 5);
-    ctx.lineTo(x + 5.5, y + 5);
-    ctx.stroke();
-    ctx.fillStyle = '#c9973f';
-    ctx.fillRect(x - 10, y - 11, 20, 15);
-    const g = ctx.createLinearGradient(0, y - 9, 0, y + 2);
-    g.addColorStop(0, '#e8a56b');
-    g.addColorStop(1, '#3d5a80');
-    ctx.fillStyle = g;
-    ctx.fillRect(x - 8, y - 9, 16, 11);
-    ctx.fillStyle = '#2c2438';
-    ctx.beginPath();
-    ctx.moveTo(x - 8, y + 2);
-    ctx.quadraticCurveTo(x - 1, y - 4, x + 8, y + 2);
-    ctx.fill();
-  },
-};
-
-// --- Cases, pedestal, vault door, exit --------------------------------
-
-function drawCase(ctx, r, time) {
-  // Cast shadow, then the wooden cabinet, then the glass vitrine
-  // with its velvet cushion and artifact.
-  shadowEllipse(ctx, r.x + r.w / 2 + 5, r.y + r.h + 5, r.w / 2 + 3, 8, 0.32);
-  const bg = ctx.createLinearGradient(0, r.y, 0, r.y + r.h);
-  bg.addColorStop(0, '#5d3a1e');
-  bg.addColorStop(0.5, '#422712');
-  bg.addColorStop(1, '#2a170a');
-  ctx.fillStyle = bg;
-  rr(ctx, r.x - 2, r.y - 2, r.w + 4, r.h + 4, 4);
-  ctx.fill();
-  ctx.strokeStyle = '#c9973f';
-  ctx.lineWidth = 1.4;
-  rr(ctx, r.x - 2, r.y - 2, r.w + 4, r.h + 4, 4);
-  ctx.stroke();
-  // Cabinet panel lines and brass studs.
-  ctx.strokeStyle = 'rgba(20,10,4,0.55)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(r.x + 5, r.y + r.h - 13, r.w - 10, 8);
-  ctx.fillStyle = '#e8bc62';
-  for (const [sx, sy] of [[r.x + 3, r.y + 3], [r.x + r.w - 3, r.y + 3], [r.x + 3, r.y + r.h - 3], [r.x + r.w - 3, r.y + r.h - 3]]) {
-    ctx.beginPath();
-    ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
-    ctx.fill();
   }
-  // Glass top with the artifact on its cushion.
-  const gx = r.x + 6;
-  const gy = r.y + 5;
-  const gw = r.w - 12;
-  const gh = r.h - 16;
-  ctx.fillStyle = '#31131f';
-  rr(ctx, gx, gy, gw, gh, 3);
-  ctx.fill();
-  const art = ARTIFACTS[r.art] || ARTIFACTS.gems;
-  art(ctx, r.x + r.w / 2, gy + gh / 2, time);
-  const glass = ctx.createLinearGradient(gx, gy, gx + gw, gy + gh);
-  glass.addColorStop(0, 'rgba(190,225,245,0.20)');
-  glass.addColorStop(0.5, 'rgba(190,225,245,0.05)');
-  glass.addColorStop(1, 'rgba(190,225,245,0.13)');
-  ctx.fillStyle = glass;
-  rr(ctx, gx, gy, gw, gh, 3);
-  ctx.fill();
-  // Diagonal highlight streaks.
-  ctx.save();
-  rr(ctx, gx, gy, gw, gh, 3);
-  ctx.clip();
-  ctx.fillStyle = 'rgba(255,255,255,0.13)';
-  ctx.beginPath();
-  ctx.moveTo(gx + gw * 0.08, gy + gh);
-  ctx.lineTo(gx + gw * 0.38, gy);
-  ctx.lineTo(gx + gw * 0.52, gy);
-  ctx.lineTo(gx + gw * 0.22, gy + gh);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.07)';
-  ctx.beginPath();
-  ctx.moveTo(gx + gw * 0.55, gy + gh);
-  ctx.lineTo(gx + gw * 0.8, gy);
-  ctx.lineTo(gx + gw * 0.88, gy);
-  ctx.lineTo(gx + gw * 0.63, gy + gh);
-  ctx.fill();
-  ctx.restore();
-  ctx.strokeStyle = 'rgba(225,245,255,0.6)';
-  ctx.lineWidth = 1.2;
-  rr(ctx, gx, gy, gw, gh, 3);
-  ctx.stroke();
 }
 
-function drawVaultDoor(ctx) {
-  const vx = 1108;
-  const vy = 128;
-  shadowEllipse(ctx, vx, vy + 40, 40, 7, 0.3);
-  const steel = ctx.createRadialGradient(vx - 12, vy - 14, 4, vx, vy, 42);
-  steel.addColorStop(0, '#8d94a8');
-  steel.addColorStop(0.55, '#565d70');
-  steel.addColorStop(1, '#232733');
-  ctx.fillStyle = steel;
-  ctx.beginPath();
-  ctx.arc(vx, vy, 38, 0, Math.PI * 2);
+function paintPainting(ctx, cx, cy, w, h, scene) {
+  const x = cx - w / 2;
+  const y = cy - h / 2;
+  // Gilded frame with a cream mat.
+  const fg = ctx.createLinearGradient(x, y, x, y + h);
+  fg.addColorStop(0, '#e8bc62');
+  fg.addColorStop(0.5, '#9a742f');
+  fg.addColorStop(1, '#6e5222');
+  ctx.fillStyle = fg;
+  rr(ctx, x, y, w, h, 3);
   ctx.fill();
-  ctx.strokeStyle = '#14161f';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(232,188,98,0.65)';
-  ctx.lineWidth = 1.6;
+  ctx.fillStyle = '#e9e0c8';
+  ctx.fillRect(x + 4, y + 4, w - 8, h - 8);
+  const ix = x + 7;
+  const iy = y + 7;
+  const iw = w - 14;
+  const ih = h - 14;
+  if (scene === 'landscape') {
+    const sky = ctx.createLinearGradient(0, iy, 0, iy + ih);
+    sky.addColorStop(0, '#e8a34c');
+    sky.addColorStop(1, '#7a3b2e');
+    ctx.fillStyle = sky;
+    ctx.fillRect(ix, iy, iw, ih);
+    ctx.fillStyle = '#f7d774';
+    ctx.beginPath();
+    ctx.arc(ix + iw * 0.68, iy + ih * 0.38, ih * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#4a2430';
+    ctx.beginPath();
+    ctx.moveTo(ix, iy + ih);
+    ctx.lineTo(ix + iw * 0.4, iy + ih * 0.45);
+    ctx.lineTo(ix + iw * 0.72, iy + ih);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#331a24';
+    ctx.beginPath();
+    ctx.moveTo(ix + iw * 0.45, iy + ih);
+    ctx.lineTo(ix + iw * 0.8, iy + ih * 0.55);
+    ctx.lineTo(ix + iw, iy + ih);
+    ctx.closePath();
+    ctx.fill();
+  } else if (scene === 'seascape') {
+    const sea = ctx.createLinearGradient(0, iy, 0, iy + ih);
+    sea.addColorStop(0, '#274b73');
+    sea.addColorStop(1, '#101f38');
+    ctx.fillStyle = sea;
+    ctx.fillRect(ix, iy, iw, ih);
+    ctx.fillStyle = '#e8ecf2';
+    ctx.beginPath();
+    ctx.arc(ix + iw * 0.3, iy + ih * 0.34, ih * 0.17, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(190,220,255,0.75)';
+    ctx.lineWidth = 1.4;
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.arc(ix + iw * (0.25 + i * 0.24), iy + ih * (0.66 + (i % 2) * 0.12), iw * 0.1, Math.PI * 1.1, Math.PI * 1.9);
+      ctx.stroke();
+    }
+  } else {
+    // Portrait: a pale bust silhouette on umber.
+    ctx.fillStyle = '#4c3421';
+    ctx.fillRect(ix, iy, iw, ih);
+    ctx.fillStyle = '#c9a87c';
+    ctx.beginPath();
+    ctx.arc(ix + iw / 2, iy + ih * 0.4, ih * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(ix + iw / 2, iy + ih * 1.02, iw * 0.24, ih * 0.42, 0, Math.PI, Math.PI * 2);
+    ctx.fill();
+  }
+  // Glass sheen.
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
   ctx.beginPath();
-  ctx.arc(vx, vy, 33, 0, Math.PI * 2);
+  ctx.moveTo(ix, iy + ih);
+  ctx.lineTo(ix + iw * 0.45, iy);
+  ctx.lineTo(ix + iw * 0.7, iy);
+  ctx.lineTo(ix + iw * 0.25, iy + ih);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function buildStatic(game) {
+  const { carpet, vaultFloor, decor } = game.level;
+  const c = document.createElement('canvas');
+  c.width = VIEW_W;
+  c.height = VIEW_H;
+  const ctx = c.getContext('2d');
+
+  // -- Floor: big marble slabs, soft mottling, warm light pools.
+  paintSlabs(ctx, 24, 104, 1256, 776, 213, 168,
+    ['#353947', '#323644', '#393d4c', '#30343f'], '#22242e');
+  for (let i = 0; i < 7; i++) {
+    const bx = 140 + hash2(i, 3) * 1000;
+    const by = 160 + hash2(3, i) * 560;
+    const bg = ctx.createRadialGradient(bx, by, 10, bx, by, 190);
+    bg.addColorStop(0, i % 2 ? 'rgba(0,0,0,0.10)' : 'rgba(255,240,210,0.045)');
+    bg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = bg;
+    ctx.fillRect(bx - 190, by - 190, 380, 380);
+  }
+  for (const p of decor.lightPools) {
+    const pg = ctx.createRadialGradient(p.x, p.y, 8, p.x, p.y, p.r);
+    pg.addColorStop(0, 'rgba(255,196,96,0.21)');
+    pg.addColorStop(1, 'rgba(255,196,96,0)');
+    ctx.fillStyle = pg;
+    ctx.fillRect(p.x - p.r, p.y - p.r, p.r * 2, p.r * 2);
+  }
+  // Marble inlay medallions set into the open floor.
+  for (const m of decor.medallions) {
+    ctx.fillStyle = 'rgba(24,22,34,0.5)';
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(217,164,65,0.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, m.r - 2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(217,164,65,0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, m.r * 0.66, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.save();
+    ctx.translate(m.x, m.y);
+    ctx.rotate(Math.PI / 4);
+    ctx.strokeStyle = 'rgba(217,164,65,0.45)';
+    ctx.strokeRect(-m.r * 0.3, -m.r * 0.3, m.r * 0.6, m.r * 0.6);
+    ctx.restore();
+    ctx.fillStyle = 'rgba(217,164,65,0.5)';
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // -- Vault floor: warmer stone, gold inset border, the rug.
+  paintSlabs(ctx, vaultFloor.x, vaultFloor.y, vaultFloor.x + vaultFloor.w,
+    vaultFloor.y + vaultFloor.h, 113, 124,
+    ['#3e3446', '#3a3042', '#42364a'], '#292031');
+  ctx.strokeStyle = 'rgba(217,164,65,0.4)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(vaultFloor.x + 7, vaultFloor.y + 7, vaultFloor.w - 14, vaultFloor.h - 14);
+  const rug = decor.vaultRug;
+  ctx.fillStyle = '#5e1620';
+  ctx.beginPath();
+  ctx.ellipse(rug.x, rug.y, rug.rx, rug.ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(217,164,65,0.65)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(rug.x, rug.y, rug.rx - 6, rug.ry - 5, 0, 0, Math.PI * 2);
   ctx.stroke();
-  // Ring bolts.
-  ctx.fillStyle = '#c8cede';
+  ctx.strokeStyle = 'rgba(217,164,65,0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.ellipse(rug.x, rug.y, rug.rx - 15, rug.ry - 11, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(232,188,98,0.4)';
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2;
+    ctx.save();
+    ctx.translate(rug.x + Math.cos(a) * (rug.rx - 10.5), rug.y + Math.sin(a) * (rug.ry - 8));
+    ctx.rotate(Math.PI / 4);
+    ctx.fillRect(-2.6, -2.6, 5.2, 5.2);
+    ctx.restore();
+  }
+
+  // -- The carpet runner: crimson, double gold border, diamond row.
+  const cg = ctx.createLinearGradient(carpet.x, 0, carpet.x + carpet.w, 0);
+  cg.addColorStop(0, '#5f1620');
+  cg.addColorStop(0.5, '#82222f');
+  cg.addColorStop(1, '#5f1620');
+  ctx.fillStyle = cg;
+  ctx.fillRect(carpet.x, carpet.y, carpet.w, carpet.h);
+  ctx.strokeStyle = GOLD;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(carpet.x + 5, carpet.y + 5, carpet.w - 10, carpet.h - 10);
+  ctx.strokeStyle = 'rgba(217,164,65,0.45)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(carpet.x + 11, carpet.y + 11, carpet.w - 22, carpet.h - 22);
+  ctx.fillStyle = 'rgba(232,188,98,0.5)';
+  for (let y = carpet.y + 34; y < carpet.y + carpet.h - 16; y += 62) {
+    ctx.save();
+    ctx.translate(carpet.x + carpet.w / 2, y);
+    ctx.rotate(Math.PI / 4);
+    ctx.fillRect(-5, -5, 10, 10);
+    ctx.restore();
+  }
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.fillRect(carpet.x, carpet.y, carpet.w, 26);
+
+  // -- Rope posts and their sagging ropes along the carpet.
+  for (const sideX of [carpet.x - 8, carpet.x + carpet.w + 8]) {
+    const sag = sideX < carpet.x ? 9 : -9;
+    ctx.strokeStyle = '#8e2432';
+    ctx.lineWidth = 3.5;
+    for (let i = 0; i < decor.ropePostsY.length - 1; i++) {
+      ctx.beginPath();
+      ctx.moveTo(sideX, decor.ropePostsY[i] - 15);
+      ctx.quadraticCurveTo(sideX + sag, (decor.ropePostsY[i] + decor.ropePostsY[i + 1]) / 2 - 8,
+        sideX, decor.ropePostsY[i + 1] - 15);
+      ctx.stroke();
+    }
+    for (const py of decor.ropePostsY) {
+      shadowEllipse(ctx, sideX, py + 1, 7, 2.6, 0.4);
+      ctx.fillStyle = '#6e5222';
+      ctx.fillRect(sideX - 1.8, py - 15, 3.6, 15);
+      const bg2 = ctx.createRadialGradient(sideX - 1.5, py - 19.5, 0.5, sideX, py - 18, 5);
+      bg2.addColorStop(0, '#ffe9a8');
+      bg2.addColorStop(1, '#9a742f');
+      ctx.fillStyle = bg2;
+      ctx.beginPath();
+      ctx.arc(sideX, py - 18, 4.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // -- Side and south walls: dark bands with a gold trim line and a
+  // soft shadow where wall meets floor.
+  ctx.fillStyle = '#1d1930';
+  ctx.fillRect(0, 776, VIEW_W, 24);
+  ctx.fillRect(0, HUD_H, 24, 736);
+  ctx.fillRect(1256, HUD_H, 24, 736);
+  ctx.fillStyle = 'rgba(217,164,65,0.4)';
+  ctx.fillRect(24, 774, 1232, 1.6);
+  ctx.fillRect(24, HUD_H, 1.6, 712);
+  ctx.fillRect(1254.4, HUD_H, 1.6, 712);
+  const shS = ctx.createLinearGradient(0, 748, 0, 776);
+  shS.addColorStop(0, 'rgba(0,0,0,0)');
+  shS.addColorStop(1, 'rgba(0,0,0,0.32)');
+  ctx.fillStyle = shS;
+  ctx.fillRect(24, 748, 1232, 28);
+
+  // -- North wall face: paneled navy wall with wainscot, pilasters,
+  // paintings and sconces — a wall you look AT, not a floor strip.
+  const wg = ctx.createLinearGradient(0, HUD_H, 0, 104);
+  wg.addColorStop(0, '#262040');
+  wg.addColorStop(0.78, '#1f1a33');
+  wg.addColorStop(1, '#171326');
+  ctx.fillStyle = wg;
+  ctx.fillRect(0, HUD_H, VIEW_W, 40);
+  ctx.strokeStyle = 'rgba(217,164,65,0.17)';
+  ctx.lineWidth = 1;
+  for (let x = 44; x < 1230; x += 118) {
+    ctx.strokeRect(x, HUD_H + 6, 96, 24);
+  }
+  ctx.fillStyle = '#2e2019';
+  ctx.fillRect(0, 93, VIEW_W, 11);
+  ctx.fillStyle = 'rgba(217,164,65,0.55)';
+  ctx.fillRect(0, 92, VIEW_W, 1.4);
+  for (const px of decor.pilastersTop) {
+    ctx.fillStyle = '#2c2450';
+    ctx.fillRect(px, HUD_H, 30, 40);
+    ctx.fillStyle = '#3a2f63';
+    ctx.fillRect(px, HUD_H, 30, 6);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(px + 26, HUD_H, 4, 40);
+    ctx.fillStyle = 'rgba(217,164,65,0.5)';
+    ctx.fillRect(px, HUD_H + 6, 30, 1.2);
+  }
+  for (const p of decor.paintings) paintPainting(ctx, p.x, 84, 124, 37, p.scene);
+  for (const sx of decor.sconces) {
+    const sg = ctx.createRadialGradient(sx, 86, 2, sx, 86, 38);
+    sg.addColorStop(0, 'rgba(255,196,96,0.30)');
+    sg.addColorStop(1, 'rgba(255,196,96,0)');
+    ctx.fillStyle = sg;
+    ctx.fillRect(sx - 38, 48, 76, 76);
+    ctx.fillStyle = '#9a742f';
+    ctx.beginPath();
+    ctx.ellipse(sx, 95, 6, 3.4, 0, 0, Math.PI);
+    ctx.fill();
+    ctx.fillStyle = '#ffd98c';
+    ctx.beginPath();
+    ctx.arc(sx, 91, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const shN = ctx.createLinearGradient(0, 104, 0, 122);
+  shN.addColorStop(0, 'rgba(0,0,0,0.34)');
+  shN.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = shN;
+  ctx.fillRect(24, 104, 1232, 18);
+
+  // -- Vault walls: heavy bands, gold trim, and the great steel door
+  // on the vault's north wall.
+  ctx.fillStyle = '#2a2138';
+  for (const r of game.level.solids) {
+    if (r.kind === 'vault') ctx.fillRect(r.x, r.y, r.w, r.h);
+  }
+  ctx.strokeStyle = 'rgba(217,164,65,0.5)';
+  ctx.lineWidth = 1.4;
+  ctx.strokeRect(733, 131, 470, 266);
+  const vd = decor.vaultDoor;
+  shadowEllipse(ctx, vd.x, vd.y + 52, 44, 8, 0.35);
+  const dg = ctx.createRadialGradient(vd.x - 14, vd.y - 16, 6, vd.x, vd.y, 50);
+  dg.addColorStop(0, '#8b93a1');
+  dg.addColorStop(0.6, '#565d6a');
+  dg.addColorStop(1, '#2b2e35');
+  ctx.fillStyle = dg;
+  ctx.beginPath();
+  ctx.arc(vd.x, vd.y, 47, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#17181d';
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  ctx.fillStyle = '#3a3f49';
   for (let i = 0; i < 10; i++) {
     const a = (i / 10) * Math.PI * 2;
     ctx.beginPath();
-    ctx.arc(vx + Math.cos(a) * 28.5, vy + Math.sin(a) * 28.5, 2.2, 0, Math.PI * 2);
+    ctx.arc(vd.x + Math.cos(a) * 38, vd.y + Math.sin(a) * 38, 3.1, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Spoked wheel handle.
-  ctx.strokeStyle = '#d7dce8';
-  ctx.lineWidth = 3;
+  const dg2 = ctx.createRadialGradient(vd.x - 8, vd.y - 10, 3, vd.x, vd.y, 30);
+  dg2.addColorStop(0, '#6d7482');
+  dg2.addColorStop(1, '#33373f');
+  ctx.fillStyle = dg2;
   ctx.beginPath();
-  ctx.arc(vx, vy, 15, 0, Math.PI * 2);
+  ctx.arc(vd.x, vd.y, 29, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#c7ccd6';
+  ctx.lineWidth = 3.6;
+  ctx.beginPath();
+  ctx.arc(vd.x, vd.y, 13.5, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.lineWidth = 2.6;
+  ctx.lineWidth = 3;
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * Math.PI * 2 + 0.4;
     ctx.beginPath();
-    ctx.moveTo(vx, vy);
-    ctx.lineTo(vx + Math.cos(a) * 15, vy + Math.sin(a) * 15);
+    ctx.moveTo(vd.x, vd.y);
+    ctx.lineTo(vd.x + Math.cos(a) * 13.5, vd.y + Math.sin(a) * 13.5);
     ctx.stroke();
   }
-  ctx.fillStyle = '#e8bc62';
+  ctx.fillStyle = '#22242a';
   ctx.beginPath();
-  ctx.arc(vx, vy, 4, 0, Math.PI * 2);
+  ctx.arc(vd.x, vd.y, 4, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = 'rgba(232,188,98,0.9)';
-  ctx.font = '700 9px Georgia, serif';
+  ctx.fillStyle = GOLD;
+  ctx.font = '700 10px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('V A U L T', vx, vy + 49);
+  ctx.fillText('V A U L T', vd.x, vd.y + 66);
+
+  return c;
 }
 
-function drawSolids(ctx, game) {
-  for (const r of game.level.solids) {
-    if (r.kind === 'case') drawCase(ctx, r, game.time);
-  }
-  drawVaultDoor(ctx);
+// --- Artifacts: drawn LARGE, standing inside their cases -----------
+// Each painter draws its artifact standing on (cx, baseY) — the
+// cushion line near the front of the case — and rising h pixels.
+// The pieces are sized to fill a 150px case, not to sit in it as a
+// thumbnail.
+
+function goldGrad(ctx, x, y, r) {
+  const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.15, x, y, r);
+  g.addColorStop(0, '#ffe9a8');
+  g.addColorStop(0.55, '#d9a441');
+  g.addColorStop(1, '#8a6d2f');
+  return g;
 }
 
-function drawLoot(ctx, game) {
-  const { loot } = game.level;
-  const p = game.level.pedestal;
-  // Marble pedestal with fluting and a velvet cushion.
-  shadowEllipse(ctx, p.x + p.w / 2 + 3, p.y + p.h + 4, p.w / 2 + 4, 6, 0.35);
-  const mg = ctx.createLinearGradient(p.x, 0, p.x + p.w, 0);
-  mg.addColorStop(0, '#6d6a78');
-  mg.addColorStop(0.5, '#cfd0da');
-  mg.addColorStop(1, '#55525f');
-  ctx.fillStyle = mg;
-  rr(ctx, p.x, p.y + 8, p.w, p.h - 8, 3);
+function cushion(ctx, cx, baseY, w) {
+  ctx.fillStyle = '#571c28';
+  rr(ctx, cx - w / 2, baseY - 7, w, 9, 4);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(40,38,52,0.5)';
-  ctx.lineWidth = 1;
-  for (let i = 1; i < 5; i++) {
-    const fx = p.x + (p.w * i) / 5;
+  ctx.fillStyle = 'rgba(255,255,255,0.10)';
+  ctx.fillRect(cx - w / 2 + 3, baseY - 7, w - 6, 2.5);
+}
+
+const ARTIFACTS = {
+  // A golden statue of a robed figure, arm raised with an orb.
+  statue(ctx, cx, baseY, w, h) {
+    ctx.fillStyle = '#5c451a';
+    rr(ctx, cx - w * 0.21, baseY - 8, w * 0.42, 8, 2);
+    ctx.fill();
+    const top = baseY - 8 - h * 0.86;
+    const g = goldGrad(ctx, cx, (top + baseY) / 2, h * 0.55);
+    // Bent raised arm and orb, drawn first so the robe overlaps it.
+    ctx.strokeStyle = '#caa037';
+    ctx.lineWidth = 5.4;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(fx, p.y + 12);
-    ctx.lineTo(fx, p.y + p.h - 3);
+    ctx.moveTo(cx + w * 0.11, top + h * 0.36);
+    ctx.lineTo(cx + w * 0.24, top + h * 0.3);
+    ctx.lineTo(cx + w * 0.27, top + h * 0.12);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    ctx.fillStyle = goldGrad(ctx, cx + w * 0.27, top + h * 0.07, 8);
+    ctx.beginPath();
+    ctx.arc(cx + w * 0.27, top + h * 0.07, 6.2, 0, Math.PI * 2);
+    ctx.fill();
+    // Robe: shoulders, a waist, then the flare — a figure, not a cone.
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(cx - w * 0.155, top + h * 0.31);
+    ctx.quadraticCurveTo(cx, top + h * 0.26, cx + w * 0.155, top + h * 0.31);
+    ctx.quadraticCurveTo(cx + w * 0.1, top + h * 0.52, cx + w * 0.13, top + h * 0.66);
+    ctx.lineTo(cx + w * 0.2, baseY - 8);
+    ctx.lineTo(cx - w * 0.2, baseY - 8);
+    ctx.lineTo(cx - w * 0.13, top + h * 0.66);
+    ctx.quadraticCurveTo(cx - w * 0.1, top + h * 0.52, cx - w * 0.155, top + h * 0.31);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(90,64,16,0.6)';
+    ctx.lineWidth = 1.2;
+    for (const f of [-0.11, 0, 0.11]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + w * f * 0.7, top + h * 0.68);
+      ctx.lineTo(cx + w * f * 1.4, baseY - 10);
+      ctx.stroke();
+    }
+    // A sash across the chest.
+    ctx.strokeStyle = 'rgba(122,92,28,0.85)';
+    ctx.lineWidth = 3.4;
+    ctx.beginPath();
+    ctx.moveTo(cx - w * 0.13, top + h * 0.36);
+    ctx.lineTo(cx + w * 0.1, top + h * 0.56);
+    ctx.stroke();
+    // Neck and head with a laurel circlet.
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - 3.4, top + h * 0.2, 6.8, h * 0.09);
+    ctx.beginPath();
+    ctx.arc(cx, top + h * 0.14, h * 0.098, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#7c5c1c';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, top + h * 0.115, h * 0.098, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.stroke();
+  },
+
+  // A marble bust on its block.
+  bust(ctx, cx, baseY, w, h) {
+    ctx.fillStyle = '#6f6a60';
+    rr(ctx, cx - w * 0.17, baseY - 10, w * 0.34, 10, 2);
+    ctx.fill();
+    const top = baseY - 10 - h * 0.8;
+    const mg = ctx.createLinearGradient(cx - w * 0.2, top, cx + w * 0.2, baseY);
+    mg.addColorStop(0, '#f0ead9');
+    mg.addColorStop(0.6, '#cfc7b2');
+    mg.addColorStop(1, '#9d9684');
+    ctx.fillStyle = mg;
+    // Shoulders and chest drape: wide at the base, cut in at the neck.
+    ctx.beginPath();
+    ctx.moveTo(cx - w * 0.31, baseY - 10);
+    ctx.quadraticCurveTo(cx - w * 0.3, top + h * 0.44, cx - w * 0.12, top + h * 0.38);
+    ctx.lineTo(cx + w * 0.12, top + h * 0.38);
+    ctx.quadraticCurveTo(cx + w * 0.3, top + h * 0.44, cx + w * 0.31, baseY - 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(90,84,70,0.5)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(cx - w * 0.18, top + h * 0.54);
+    ctx.quadraticCurveTo(cx, top + h * 0.64, cx + w * 0.16, top + h * 0.52);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - w * 0.05, top + h * 0.42);
+    ctx.lineTo(cx - w * 0.03, baseY - 14);
+    ctx.moveTo(cx + w * 0.06, top + h * 0.44);
+    ctx.lineTo(cx + w * 0.08, baseY - 14);
+    ctx.stroke();
+    // Neck shadow, so the head sits ON the shoulders, not in them.
+    ctx.fillStyle = 'rgba(90,84,70,0.4)';
+    ctx.beginPath();
+    ctx.ellipse(cx, top + h * 0.37, 7.5, 3.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Neck, head and hair bun.
+    ctx.fillStyle = mg;
+    ctx.fillRect(cx - 4, top + h * 0.26, 8, h * 0.13);
+    ctx.beginPath();
+    ctx.arc(cx, top + h * 0.17, h * 0.104, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx, top + h * 0.055, h * 0.058, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(90,84,70,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(cx + w * 0.045, top + h * 0.21, 2.2, 3.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  },
+
+  // A tall ceremonial urn with handles and a painted band.
+  vase(ctx, cx, baseY, w, h) {
+    const top = baseY - h * 0.92;
+    const vg = ctx.createLinearGradient(cx - w * 0.3, top, cx + w * 0.3, baseY);
+    vg.addColorStop(0, '#7d8fa8');
+    vg.addColorStop(0.5, '#42536b');
+    vg.addColorStop(1, '#232f42');
+    ctx.fillStyle = vg;
+    ctx.beginPath();
+    ctx.moveTo(cx - w * 0.09, top);
+    ctx.lineTo(cx + w * 0.09, top);
+    ctx.quadraticCurveTo(cx + w * 0.11, top + h * 0.22, cx + w * 0.27, top + h * 0.48);
+    ctx.quadraticCurveTo(cx + w * 0.30, top + h * 0.78, cx + w * 0.13, baseY - 6);
+    ctx.lineTo(cx - w * 0.13, baseY - 6);
+    ctx.quadraticCurveTo(cx - w * 0.30, top + h * 0.78, cx - w * 0.27, top + h * 0.48);
+    ctx.quadraticCurveTo(cx - w * 0.11, top + h * 0.22, cx - w * 0.09, top);
+    ctx.closePath();
+    ctx.fill();
+    // Rim, handles, motif band, foot.
+    ctx.fillStyle = '#2c3a4f';
+    rr(ctx, cx - w * 0.14, top - 4, w * 0.28, 7, 3);
+    ctx.fill();
+    ctx.strokeStyle = '#54677f';
+    ctx.lineWidth = 3.4;
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(cx + s * w * 0.27, top + h * 0.4, w * 0.085, s > 0 ? -1.2 : Math.PI - 1.94, s > 0 ? 1.2 : Math.PI + 1.94);
+      ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(217,164,65,0.85)';
+    ctx.fillRect(cx - w * 0.245, top + h * 0.52, w * 0.49, 5);
+    ctx.fillStyle = '#d9c9a8';
+    for (let i = -2; i <= 2; i++) {
+      ctx.save();
+      ctx.translate(cx + i * w * 0.09, top + h * 0.545);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillRect(-2.4, -2.4, 4.8, 4.8);
+      ctx.restore();
+    }
+    ctx.fillStyle = '#1b2635';
+    rr(ctx, cx - w * 0.15, baseY - 6, w * 0.3, 6, 2);
+    ctx.fill();
+  },
+
+  // A squat lidded urn: knob, narrow lid, a neck gap, then the body.
+  urn(ctx, cx, baseY, w, h) {
+    const top = baseY - h * 0.66;
+    const ug = ctx.createLinearGradient(cx - w * 0.3, top, cx + w * 0.3, baseY);
+    ug.addColorStop(0, '#a86a4e');
+    ug.addColorStop(0.55, '#71422c');
+    ug.addColorStop(1, '#452718');
+    // Body, starting below the neck line.
+    ctx.fillStyle = ug;
+    ctx.beginPath();
+    ctx.moveTo(cx - w * 0.15, top + 17);
+    ctx.quadraticCurveTo(cx - w * 0.34, top + h * 0.34, cx - w * 0.3, top + h * 0.58);
+    ctx.quadraticCurveTo(cx - w * 0.26, baseY - 8, cx - w * 0.13, baseY - 5);
+    ctx.lineTo(cx + w * 0.13, baseY - 5);
+    ctx.quadraticCurveTo(cx + w * 0.26, baseY - 8, cx + w * 0.3, top + h * 0.58);
+    ctx.quadraticCurveTo(cx + w * 0.34, top + h * 0.34, cx + w * 0.15, top + 17);
+    ctx.closePath();
+    ctx.fill();
+    // Handles at the neck.
+    ctx.strokeStyle = '#57341f';
+    ctx.lineWidth = 3.2;
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(cx + s * w * 0.19, top + h * 0.3, w * 0.07, s > 0 ? -1.1 : Math.PI - 2.04, s > 0 ? 1.1 : Math.PI + 2.04);
+      ctx.stroke();
+    }
+    // Neck band and the narrower lid above it.
+    ctx.fillStyle = '#57341f';
+    ctx.fillRect(cx - w * 0.16, top + 12.5, w * 0.32, 5);
+    ctx.fillStyle = '#7c4a2e';
+    ctx.beginPath();
+    ctx.ellipse(cx, top + 12, w * 0.125, 6, 0, Math.PI, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(cx - w * 0.125, top + 8.5, w * 0.25, 3.5);
+    ctx.fillStyle = goldGrad(ctx, cx, top + 3, 6);
+    ctx.beginPath();
+    ctx.arc(cx, top + 3, 4.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(217,164,65,0.8)';
+    ctx.fillRect(cx - w * 0.28, top + h * 0.4, w * 0.56, 3.6);
+    ctx.fillRect(cx - w * 0.24, baseY - 13, w * 0.48, 3);
+  },
+
+  // The crown jewels: a big five-point crown on its cushion.
+  crown(ctx, cx, baseY, w, h) {
+    cushion(ctx, cx, baseY, w * 0.86);
+    const top = baseY - 7 - h * 0.52;
+    const cw = w * 0.78;
+    const g = goldGrad(ctx, cx, (top + baseY) / 2, cw * 0.5);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(cx - cw / 2, baseY - 7);
+    ctx.lineTo(cx - cw / 2, top + h * 0.16);
+    ctx.lineTo(cx - cw * 0.31, top + h * 0.3);
+    ctx.lineTo(cx - cw * 0.19, top);
+    ctx.lineTo(cx, top + h * 0.28);
+    ctx.lineTo(cx + cw * 0.19, top);
+    ctx.lineTo(cx + cw * 0.31, top + h * 0.3);
+    ctx.lineTo(cx + cw / 2, top + h * 0.16);
+    ctx.lineTo(cx + cw / 2, baseY - 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#7c5c1c';
+    ctx.fillRect(cx - cw / 2, baseY - 13, cw, 4.5);
+    for (const [fx, col] of [[-0.3, '#e02444'], [0, '#38bdf8'], [0.3, '#e02444']]) {
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(cx + cw * fx, baseY - 20, 3.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#ffe9a8';
+    for (const fx of [-0.5, -0.19, 0, 0.19, 0.5]) {
+      ctx.beginPath();
+      ctx.arc(cx + cw * fx, top + (fx === 0 ? h * 0.24 : h * 0.1), 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+
+  // A cluster of three big cut gems on a cushion.
+  gems(ctx, cx, baseY, w, h) {
+    cushion(ctx, cx, baseY, w * 0.9);
+    const s = h / 46;
+    drawDiamondGem(ctx, cx - w * 0.2, baseY - 16, s * 0.92, '#c9f2ff', '#38bdf8', '#1d6fb8');
+    drawDiamondGem(ctx, cx + w * 0.19, baseY - 15, s * 0.84, '#ffd3dd', '#fb7185', '#b02a44');
+    drawDiamondGem(ctx, cx + w * 0.01, baseY - 26, s * 1.05, '#e2ffe9', '#4ade80', '#15803d');
+    ctx.fillStyle = 'rgba(255,233,168,0.9)';
+    for (const [dx, dy] of [[-0.34, -6], [-0.05, -4], [0.3, -7], [0.12, -3]]) {
+      ctx.beginPath();
+      ctx.arc(cx + w * dx, baseY + dy, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+
+  // Same cluster in emerald and gold, for the vault's side case.
+  emeralds(ctx, cx, baseY, w, h) {
+    cushion(ctx, cx, baseY, w * 0.9);
+    const s = h / 46;
+    drawDiamondGem(ctx, cx - w * 0.18, baseY - 14, s * 0.85, '#e2ffe9', '#34d399', '#0d6e4f');
+    drawDiamondGem(ctx, cx + w * 0.17, baseY - 14, s * 0.85, '#e2ffe9', '#34d399', '#0d6e4f');
+    drawDiamondGem(ctx, cx, baseY - 23, s, '#fff7cc', '#facc15', '#a16207');
+  },
+
+  // A tall ceremonial mask, near as tall as its case is deep.
+  mask(ctx, cx, baseY, w, h) {
+    const top = baseY - h * 0.98;
+    const mw = Math.min(w * 0.62, 52);
+    const mg = ctx.createLinearGradient(cx - mw / 2, top, cx + mw / 2, baseY);
+    mg.addColorStop(0, '#8a5a30');
+    mg.addColorStop(0.5, '#5f3c1e');
+    mg.addColorStop(1, '#3c2512');
+    ctx.fillStyle = mg;
+    ctx.beginPath();
+    ctx.ellipse(cx, (top + baseY) / 2, mw / 2, (baseY - top) / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(217,164,65,0.8)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(cx, (top + baseY) / 2, mw / 2 - 3.5, (baseY - top) / 2 - 3.5, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    // Crest feathers.
+    ctx.strokeStyle = '#b03a2e';
+    ctx.lineWidth = 3;
+    for (const f of [-0.7, -0.35, 0, 0.35, 0.7]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + f * mw * 0.4, top + 6);
+      ctx.lineTo(cx + f * mw * 0.62, top - 7 - Math.abs(f) * -4);
+      ctx.stroke();
+    }
+    // Eye slits, nose ridge, mouth.
+    ctx.fillStyle = '#120a04';
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(cx + s * mw * 0.21, top + h * 0.36, mw * 0.11, 3.6, s * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(30,17,7,0.8)';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(cx, top + h * 0.42);
+    ctx.lineTo(cx - 2.5, top + h * 0.62);
+    ctx.lineTo(cx + 2, top + h * 0.66);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(cx, top + h * 0.8, mw * 0.16, 3.4, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = GOLD;
+    ctx.beginPath();
+    ctx.arc(cx, top + h * 0.16, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+  },
+
+  // A golden chalice with a glowing bowl.
+  chalice(ctx, cx, baseY, w, h) {
+    const top = baseY - h * 0.72;
+    const g = goldGrad(ctx, cx, (top + baseY) / 2, w * 0.4);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(cx - w * 0.3, top);
+    ctx.lineTo(cx + w * 0.3, top);
+    ctx.quadraticCurveTo(cx + w * 0.26, top + h * 0.34, cx + w * 0.07, top + h * 0.44);
+    ctx.lineTo(cx - w * 0.07, top + h * 0.44);
+    ctx.quadraticCurveTo(cx - w * 0.26, top + h * 0.34, cx - w * 0.3, top);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#ffedb0';
+    ctx.beginPath();
+    ctx.ellipse(cx, top, w * 0.3, 4.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - 3, top + h * 0.44, 6, h * 0.2);
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY - 3, w * 0.2, 4.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#e02444';
+    ctx.beginPath();
+    ctx.arc(cx, top + h * 0.24, 3.6, 0, Math.PI * 2);
+    ctx.fill();
+  },
+
+  // One huge cut ruby on a small cushion.
+  ruby(ctx, cx, baseY, w, h) {
+    cushion(ctx, cx, baseY, w * 0.7);
+    drawDiamondGem(ctx, cx, baseY - h * 0.34, h / 21, '#ffd3dd', '#f43f5e', '#9f1239');
+  },
+
+  // Stacks of gold coins, spilling.
+  coins(ctx, cx, baseY, w, h) {
+    const stacks = [[-0.28, 0.52], [-0.02, 0.8], [0.24, 0.4], [0.05, 0.58]];
+    for (const [fx, fh] of stacks) {
+      const sx = cx + w * fx;
+      const sh = h * fh;
+      for (let y = 0; y < sh; y += 4.6) {
+        ctx.fillStyle = y % 9.2 < 4.6 ? '#d9a441' : '#b98a2e';
+        ctx.beginPath();
+        ctx.ellipse(sx, baseY - 3 - y, w * 0.115, 3.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = '#ffe9a8';
+      ctx.beginPath();
+      ctx.ellipse(sx, baseY - 3 - sh, w * 0.115, 3.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#e8bc62';
+    for (const [dx, dy] of [[-0.38, -2], [-0.14, -1], [0.36, -2], [0.14, -1.5]]) {
+      ctx.beginPath();
+      ctx.ellipse(cx + w * dx, baseY + dy, 4.6, 2.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+};
+
+// --- Furniture -------------------------------------------------------
+
+// A display case: floor shadow, a wooden front face with a brass
+// plaque, a glass top, and the artifact standing large inside it.
+function drawCase(ctx, r, time) {
+  const cx = r.x + r.w / 2;
+  const baseY = r.y + r.h;
+  shadowEllipse(ctx, cx + 4, baseY + 4, r.w / 2 + 3, 9, 0.42);
+  // Front face (the vertical south side of the box).
+  const fg = ctx.createLinearGradient(0, baseY - 21, 0, baseY);
+  fg.addColorStop(0, '#4a2f1d');
+  fg.addColorStop(1, '#2a1a10');
+  ctx.fillStyle = fg;
+  ctx.fillRect(r.x, baseY - 21, r.w, 21);
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    ctx.beginPath();
+    ctx.moveTo(r.x + (r.w * i) / 4, baseY - 19);
+    ctx.lineTo(r.x + (r.w * i) / 4, baseY - 3);
     ctx.stroke();
   }
-  ctx.fillStyle = '#e8e6ee';
-  ctx.fillRect(p.x - 3, p.y + 4, p.w + 6, 6);
-  ctx.fillStyle = '#7c1226';
-  rr(ctx, p.x + 6, p.y - 2, p.w - 12, 9, 3);
+  ctx.fillStyle = 'rgba(217,164,65,0.9)';
+  ctx.fillRect(r.x, baseY - 22.5, r.w, 1.8);
+  ctx.fillStyle = '#c8a24a';
+  rr(ctx, cx - 13, baseY - 15, 26, 8, 2);
   ctx.fill();
-  // Brass name plaque.
-  ctx.fillStyle = '#2a1f0d';
-  rr(ctx, p.x + 2, p.y + p.h + 7, p.w + 26, 15, 3);
-  ctx.fill();
-  ctx.strokeStyle = GOLD_DK;
+  ctx.fillStyle = 'rgba(40,26,8,0.85)';
+  ctx.fillRect(cx - 9, baseY - 12.6, 18, 1.6);
+  ctx.fillRect(cx - 6, baseY - 9.8, 12, 1.4);
+  // Glass top: dark teal glass over a velvet interior.
+  const topH = r.h - 18;
+  const gg = ctx.createLinearGradient(0, r.y, 0, r.y + topH);
+  gg.addColorStop(0, '#1b2a38');
+  gg.addColorStop(1, '#0d141d');
+  ctx.fillStyle = gg;
+  ctx.fillRect(r.x, r.y, r.w, topH);
+  ctx.fillStyle = '#3d1520';
+  ctx.fillRect(r.x + 9, r.y + topH - 21, r.w - 18, 15);
+  ctx.strokeStyle = '#57503e';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(r.x + 1.5, r.y + 1.5, r.w - 3, topH - 3);
+  ctx.strokeStyle = 'rgba(232,188,98,0.5)';
   ctx.lineWidth = 1;
-  rr(ctx, p.x + 2, p.y + p.h + 7, p.w + 26, 15, 3);
+  ctx.strokeRect(r.x + 5, r.y + 5, r.w - 10, topH - 10);
+  // The artifact, standing on the cushion line.
+  const art = ARTIFACTS[r.art] || ARTIFACTS.gems;
+  art(ctx, cx, r.y + topH - 6, r.w - 26, topH + 30);
+  // Glass shine over everything.
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.beginPath();
+  ctx.moveTo(r.x + r.w * 0.12, r.y + topH);
+  ctx.lineTo(r.x + r.w * 0.44, r.y);
+  ctx.lineTo(r.x + r.w * 0.62, r.y);
+  ctx.lineTo(r.x + r.w * 0.3, r.y + topH);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.beginPath();
+  ctx.moveTo(r.x + r.w * 0.58, r.y + topH);
+  ctx.lineTo(r.x + r.w * 0.8, r.y);
+  ctx.lineTo(r.x + r.w * 0.88, r.y);
+  ctx.lineTo(r.x + r.w * 0.66, r.y + topH);
+  ctx.closePath();
+  ctx.fill();
+  if (Math.sin(time * 2 + cx * 0.7) > 0.72) {
+    sparkle(ctx, cx + (hash2(cx, 7) - 0.5) * r.w * 0.5, r.y + 12, 5.5, 0.75);
+  }
+}
+
+// A statue plinth: marble cylinder, statue standing on top.
+function drawPlinth(ctx, r) {
+  const cx = r.x + r.w / 2;
+  const baseY = r.y + r.h;
+  shadowEllipse(ctx, cx + 4, baseY + 4, r.w / 2 + 5, 9, 0.45);
+  const mg = ctx.createLinearGradient(r.x, 0, r.x + r.w, 0);
+  mg.addColorStop(0, '#8f887a');
+  mg.addColorStop(0.35, '#d8d1bf');
+  mg.addColorStop(1, '#7c7668');
+  ctx.fillStyle = mg;
+  ctx.fillRect(r.x + 5, r.y + 16, r.w - 10, r.h - 16);
+  ctx.strokeStyle = 'rgba(70,64,54,0.4)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    ctx.beginPath();
+    ctx.moveTo(r.x + 5 + ((r.w - 10) * i) / 4, r.y + 20);
+    ctx.lineTo(r.x + 5 + ((r.w - 10) * i) / 4, baseY - 3);
+    ctx.stroke();
+  }
+  ctx.fillStyle = '#e6dfcd';
+  ctx.beginPath();
+  ctx.ellipse(cx, r.y + 16, r.w / 2 - 1, 8.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#b3ab97';
+  ctx.beginPath();
+  ctx.ellipse(cx, r.y + 16, r.w / 2 - 9, 5.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // The statue itself, ~64px of figure on the cap: shoulders, a
+  // waist, one arm out — outlined so it never washes into the marble.
+  const top = r.y + 12 - 62;
+  const stone = r.art === 'statueStone';
+  const g = stone
+    ? ctx.createLinearGradient(cx - 12, top, cx + 12, r.y + 12)
+    : goldGrad(ctx, cx, (top + r.y) / 2, 42);
+  if (stone) {
+    g.addColorStop(0, '#c4bda9');
+    g.addColorStop(0.55, '#8f8875');
+    g.addColorStop(1, '#5f594b');
+  }
+  ctx.strokeStyle = stone ? '#4c463a' : '#caa037';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx - 6, top + 26);
+  ctx.lineTo(cx - 15, top + 42);
   ctx.stroke();
-  ctx.fillStyle = GOLD;
-  ctx.font = '700 9.5px Georgia, serif';
+  ctx.lineCap = 'butt';
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(cx - 8.5, top + 21);
+  ctx.quadraticCurveTo(cx, top + 17.5, cx + 8.5, top + 21);
+  ctx.quadraticCurveTo(cx + 5.5, top + 34, cx + 7, top + 42);
+  ctx.lineTo(cx + 12.5, r.y + 12);
+  ctx.lineTo(cx - 12.5, r.y + 12);
+  ctx.lineTo(cx - 7, top + 42);
+  ctx.quadraticCurveTo(cx - 5.5, top + 34, cx - 8.5, top + 21);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(40,34,24,0.55)';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(cx, top + 11, 7.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(40,34,24,0.45)';
+  ctx.stroke();
+}
+
+// A chunky stone gate post with a brass ball finial.
+function drawPost(ctx, r) {
+  const cx = r.x + r.w / 2;
+  const baseY = r.y + r.h;
+  shadowEllipse(ctx, cx + 3, baseY + 3, r.w / 2 + 3, 7, 0.45);
+  const sg = ctx.createLinearGradient(r.x, 0, r.x + r.w, 0);
+  sg.addColorStop(0, '#5d5648');
+  sg.addColorStop(0.4, '#948b76');
+  sg.addColorStop(1, '#4c463a');
+  ctx.fillStyle = sg;
+  ctx.fillRect(r.x + 3, r.y - 8, r.w - 6, r.h + 8);
+  ctx.fillStyle = '#6e6656';
+  ctx.fillRect(r.x, r.y - 12, r.w, 7);
+  ctx.fillStyle = '#3c372e';
+  ctx.fillRect(r.x + 1, baseY - 6, r.w - 2, 6);
+  const bg = ctx.createRadialGradient(cx - 3, r.y - 19, 1, cx, r.y - 16, 8);
+  bg.addColorStop(0, '#ffe9a8');
+  bg.addColorStop(1, '#9a742f');
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.arc(cx, r.y - 16, 7, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// The loot pedestal and the Aurora Diamond: a fluted marble column,
+// a cushion, and a big faceted gem floating in its own glow.
+function drawPedestal(ctx, game) {
+  const p = game.level.pedestal;
+  const loot = game.level.loot;
+  const cx = p.x + p.w / 2;
+  const baseY = p.y + p.h;
+  ctx.strokeStyle = 'rgba(217,164,65,0.55)';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.ellipse(cx, baseY + 5, 62, 13, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  shadowEllipse(ctx, cx + 4, baseY + 4, p.w / 2 + 8, 9, 0.45);
+  const mg = ctx.createLinearGradient(p.x, 0, p.x + p.w, 0);
+  mg.addColorStop(0, '#8f887a');
+  mg.addColorStop(0.35, '#ded7c5');
+  mg.addColorStop(1, '#7c7668');
+  ctx.fillStyle = mg;
+  ctx.fillRect(p.x + 6, p.y + 15, p.w - 12, p.h - 15);
+  ctx.strokeStyle = 'rgba(70,64,54,0.45)';
+  ctx.lineWidth = 1.2;
+  for (let i = 1; i < 6; i++) {
+    ctx.beginPath();
+    ctx.moveTo(p.x + 6 + ((p.w - 12) * i) / 6, p.y + 19);
+    ctx.lineTo(p.x + 6 + ((p.w - 12) * i) / 6, baseY - 3);
+    ctx.stroke();
+  }
+  ctx.fillStyle = '#efe9d8';
+  ctx.fillRect(p.x - 3, p.y + 7, p.w + 6, 10);
+  ctx.fillStyle = 'rgba(217,164,65,0.8)';
+  ctx.fillRect(p.x - 3, p.y + 15.5, p.w + 6, 1.6);
+  // Brass name plaque on the front face.
+  ctx.fillStyle = '#c8a24a';
+  rr(ctx, cx - 21, p.y + 34, 42, 11, 2);
+  ctx.fill();
+  ctx.fillStyle = '#33240a';
+  ctx.font = '700 6.4px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('THE AURORA DIAMOND', p.x + (p.w + 30) / 2, p.y + p.h + 18);
-  if (game.hasLoot) {
-    // The empty cushion keeps a dust outline where the diamond sat.
-    ctx.save();
-    ctx.strokeStyle = 'rgba(240,245,255,0.4)';
+  ctx.fillText('AURORA', cx, p.y + 41.5);
+  // Cushion and the diamond (or its dust outline once taken).
+  ctx.fillStyle = '#571c28';
+  rr(ctx, cx - 24, p.y + 1, 48, 9, 4);
+  ctx.fill();
+  if (!game.hasLoot) {
+    const glow = ctx.createRadialGradient(cx, p.y - 18, 4, cx, p.y - 18, 52);
+    glow.addColorStop(0, 'rgba(140,210,255,0.34)');
+    glow.addColorStop(1, 'rgba(140,210,255,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(cx - 52, p.y - 70, 104, 104);
+    drawDiamondGem(ctx, loot.x, p.y - 16, 2.15, '#e6f7ff', '#59c2f0', '#1565a8');
+    if (Math.sin(game.time * 2.4) > 0.55) sparkle(ctx, loot.x - 15, p.y - 34, 6, 0.85);
+    if (Math.sin(game.time * 2.4 + 2) > 0.6) sparkle(ctx, loot.x + 16, p.y - 22, 4.6, 0.7);
+    ctx.fillStyle = GOLD;
+    ctx.font = '700 10.5px system-ui, sans-serif';
+    ctx.fillText('THE AURORA DIAMOND', cx, baseY + 22);
+  } else {
+    ctx.strokeStyle = 'rgba(230,247,255,0.5)';
     ctx.lineWidth = 1.2;
     ctx.setLineDash([4, 3.4]);
     ctx.beginPath();
-    ctx.moveTo(loot.x - 13, loot.y - 12);
-    ctx.lineTo(loot.x - 7, loot.y - 19);
-    ctx.lineTo(loot.x + 7, loot.y - 19);
-    ctx.lineTo(loot.x + 13, loot.y - 12);
-    ctx.lineTo(loot.x, loot.y + 2);
+    ctx.moveTo(cx - 12, p.y - 2);
+    ctx.lineTo(cx, p.y - 30);
+    ctx.lineTo(cx + 12, p.y - 2);
     ctx.closePath();
     ctx.stroke();
-    ctx.restore();
-    return;
+    ctx.setLineDash([]);
   }
-  const glow = 0.55 + 0.3 * Math.sin(game.time * 3);
-  const grad = ctx.createRadialGradient(loot.x, loot.y, 2, loot.x, loot.y, 34);
-  grad.addColorStop(0, `rgba(140,220,255,${0.8 * glow})`);
-  grad.addColorStop(1, 'rgba(140,220,255,0)');
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(loot.x, loot.y, 34, 0, Math.PI * 2);
-  ctx.fill();
-  const bob = Math.sin(game.time * 2.2) * 1.6;
-  drawDiamondGem(ctx, loot.x, loot.y - 6 + bob, 1.45, '#d8f4ff', '#4fc3f7', '#1565a8');
-  sparkle(ctx, loot.x - 13, loot.y - 18 + bob, 6, 0.5 + 0.35 * Math.sin(game.time * 3.4));
-  sparkle(ctx, loot.x + 14, loot.y - 8 + bob, 4.4, 0.4 + 0.3 * Math.sin(game.time * 3.4 + 1.7));
 }
+
+// A potted plant: terracotta pot, layered leaf fans.
+function drawPlant(ctx, p) {
+  shadowEllipse(ctx, p.x, p.y + 2, 17, 5, 0.4);
+  const leaf = (ang, len, col) => {
+    ctx.save();
+    ctx.translate(p.x, p.y - 14);
+    ctx.rotate(ang);
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.ellipse(0, -len / 2, 5.6, len / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  };
+  leaf(-0.85, 34, '#2c6136');
+  leaf(0.85, 34, '#2c6136');
+  leaf(-0.45, 42, '#3a7d46');
+  leaf(0.45, 42, '#3a7d46');
+  leaf(0, 48, '#4c9459');
+  leaf(-1.25, 26, '#35713f');
+  leaf(1.25, 26, '#35713f');
+  const pg = ctx.createLinearGradient(p.x - 13, p.y - 18, p.x + 13, p.y);
+  pg.addColorStop(0, '#b3613e');
+  pg.addColorStop(1, '#7c3f24');
+  ctx.fillStyle = pg;
+  ctx.beginPath();
+  ctx.moveTo(p.x - 12, p.y - 17);
+  ctx.lineTo(p.x + 12, p.y - 17);
+  ctx.lineTo(p.x + 8.5, p.y);
+  ctx.lineTo(p.x - 8.5, p.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#cf7f57';
+  ctx.fillRect(p.x - 13.5, p.y - 20, 27, 4.6);
+}
+
+// A bench with a slatted back, seat and legs.
+function drawBench(ctx, b) {
+  shadowEllipse(ctx, b.x + b.w / 2 + 3, b.y + b.h + 3, b.w / 2, 6, 0.38);
+  ctx.fillStyle = '#241610';
+  ctx.fillRect(b.x + 8, b.y + 16, 6, 12);
+  ctx.fillRect(b.x + b.w - 14, b.y + 16, 6, 12);
+  const wg = ctx.createLinearGradient(0, b.y, 0, b.y + b.h);
+  wg.addColorStop(0, '#5d3d22');
+  wg.addColorStop(1, '#3a2413');
+  ctx.fillStyle = wg;
+  rr(ctx, b.x, b.y + 10, b.w, 9, 2.5);
+  ctx.fill();
+  ctx.fillStyle = '#6e4a2a';
+  rr(ctx, b.x, b.y - 4, b.w, 6.5, 2.5);
+  ctx.fill();
+  rr(ctx, b.x, b.y + 3.5, b.w, 5.5, 2.5);
+  ctx.fill();
+  ctx.fillStyle = '#2c1a0e';
+  ctx.fillRect(b.x + 6, b.y - 6, 5, 16);
+  ctx.fillRect(b.x + b.w - 11, b.y - 6, 5, 16);
+}
+
+// --- Exit --------------------------------------------------------------
 
 function drawExit(ctx, game) {
   const e = game.level.exit;
-  const active = game.hasLoot;
-  if (active) {
-    const pulse = 0.6 + 0.4 * Math.sin(game.time * 5);
-    ctx.fillStyle = `rgba(74,222,128,${0.22 * pulse})`;
-    rr(ctx, e.x - 7, e.y - 7, e.w + 14, e.h + 14, 6);
-    ctx.fill();
-  }
-  // Double doors with panels and a lit sign above.
-  const dg = ctx.createLinearGradient(e.x, 0, e.x + e.w, 0);
-  dg.addColorStop(0, '#233018');
-  dg.addColorStop(0.5, active ? '#2e5426' : '#2c3038');
-  dg.addColorStop(1, '#1a2413');
-  ctx.fillStyle = active ? dg : '#262a33';
-  rr(ctx, e.x, e.y, e.w, e.h, 4);
-  ctx.fill();
-  ctx.strokeStyle = active ? '#4ade80' : '#57506b';
+  const open = game.hasLoot;
+  ctx.fillStyle = '#101823';
+  ctx.fillRect(e.x, e.y, e.w, e.h);
+  ctx.strokeStyle = open ? '#4ade80' : GOLD_DK;
   ctx.lineWidth = 2;
-  rr(ctx, e.x, e.y, e.w, e.h, 4);
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-  ctx.lineWidth = 1.4;
+  ctx.strokeRect(e.x + 2, e.y + 2, e.w - 4, e.h - 4);
+  ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+  ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(e.x + e.w / 2, e.y + 4);
   ctx.lineTo(e.x + e.w / 2, e.y + e.h - 4);
   ctx.stroke();
-  ctx.strokeStyle = 'rgba(255,255,255,0.14)';
-  ctx.strokeRect(e.x + 8, e.y + 8, e.w / 2 - 14, e.h - 22);
-  ctx.strokeRect(e.x + e.w / 2 + 6, e.y + 8, e.w / 2 - 14, e.h - 22);
-  ctx.fillStyle = active ? '#d9f99d' : '#9aa3b2';
-  ctx.beginPath();
-  ctx.arc(e.x + e.w / 2 - 6, e.y + e.h / 2, 2.2, 0, Math.PI * 2);
-  ctx.arc(e.x + e.w / 2 + 6, e.y + e.h / 2, 2.2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = active ? '#14532d' : '#1c1f27';
-  rr(ctx, e.x + 14, e.y - 17, e.w - 28, 14, 3);
-  ctx.fill();
-  ctx.strokeStyle = active ? '#4ade80' : '#4a4f5c';
-  ctx.lineWidth = 1;
-  rr(ctx, e.x + 14, e.y - 17, e.w - 28, 14, 3);
-  ctx.stroke();
-  ctx.fillStyle = active ? '#bbf7d0' : '#8d97a8';
-  ctx.font = '700 10.5px system-ui, sans-serif';
+  if (open) {
+    const pulse = 0.55 + 0.3 * Math.sin(game.time * 5);
+    ctx.fillStyle = `rgba(74,222,128,${0.13 * pulse + 0.05})`;
+    ctx.fillRect(e.x + 3, e.y + 3, e.w - 6, e.h - 6);
+  }
+  ctx.fillStyle = open ? '#4ade80' : '#a08c5a';
+  ctx.font = '700 11.5px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText(active ? 'EXIT — GO!' : 'EXIT', e.x + e.w / 2, e.y - 6.5);
-  ctx.fillStyle = active ? '#bbf7d0' : '#6d7686';
-  ctx.font = '700 13px system-ui, sans-serif';
-  ctx.fillText('▼', e.x + e.w / 2, e.y + e.h - 7);
+  ctx.fillText(open ? 'EXIT — GO!' : 'EXIT', e.x + e.w / 2, e.y - 7);
+  // Door handles.
+  ctx.fillStyle = '#c8ccd4';
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(e.x + e.w / 2 + s * 9, e.y + e.h / 2 + 4, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
-// --- Cones and cameras --------------------------------------------------
+// --- Cones and cameras -------------------------------------------------
 
 function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot) {
   if (poly.length < 2) return;
@@ -1049,9 +1204,9 @@ function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot) {
   ctx.closePath();
   ctx.clip();
   const g = ctx.createRadialGradient(ox, oy, 3, ox, oy, range);
-  g.addColorStop(0, `rgba(${rgb},${hot ? 0.52 : 0.40})`);
-  g.addColorStop(0.45, `rgba(${rgb},${hot ? 0.34 : 0.24})`);
-  g.addColorStop(0.8, `rgba(${rgb},${hot ? 0.16 : 0.10})`);
+  g.addColorStop(0, `rgba(${rgb},${hot ? 0.46 : 0.33})`);
+  g.addColorStop(0.45, `rgba(${rgb},${hot ? 0.28 : 0.19})`);
+  g.addColorStop(0.8, `rgba(${rgb},${hot ? 0.12 : 0.07})`);
   g.addColorStop(1, `rgba(${rgb},0)`);
   ctx.fillStyle = g;
   ctx.fillRect(ox - range, oy - range, range * 2, range * 2);
@@ -1060,7 +1215,7 @@ function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot) {
   ctx.moveTo(poly[0].x, poly[0].y);
   for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
   ctx.closePath();
-  ctx.strokeStyle = `rgba(${rgb},${hot ? 0.55 : 0.34})`;
+  ctx.strokeStyle = `rgba(${rgb},${hot ? 0.5 : 0.28})`;
   ctx.lineWidth = 1;
   ctx.stroke();
 }
@@ -1068,21 +1223,20 @@ function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot) {
 function drawWatchers(ctx, game) {
   const { solids } = game.level;
   for (const c of game.cameras) {
-    const hot = c.sees > 0;
     drawConeSoft(ctx, conePolygon(c.x, c.y, c.facing, c.half, c.range, solids),
-      c.x, c.y, c.range, '255,52,52', hot);
+      c.x, c.y, c.range, '255,52,52', c.sees > 0);
   }
   for (const g of game.guards) {
     const hot = g.sees > 0 || g.state === 'converge';
     drawConeSoft(ctx, conePolygon(g.x, g.y, g.facing, g.half, g.range, solids),
       g.x, g.y, g.range, hot ? '255,96,40' : '255,186,64', hot);
     // Flashlight glint at the cone's origin.
-    const fg = ctx.createRadialGradient(g.x, g.y, 1, g.x, g.y, 15);
+    const fg = ctx.createRadialGradient(g.x, g.y, 1, g.x, g.y, 16);
     fg.addColorStop(0, 'rgba(255,240,200,0.5)');
     fg.addColorStop(1, 'rgba(255,240,200,0)');
     ctx.fillStyle = fg;
     ctx.beginPath();
-    ctx.arc(g.x, g.y, 15, 0, Math.PI * 2);
+    ctx.arc(g.x, g.y, 16, 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -1090,250 +1244,342 @@ function drawWatchers(ctx, game) {
 function drawCameraBodies(ctx, game) {
   for (const c of game.cameras) {
     const hot = c.sees > 0;
-    // Wall bracket.
+    // Wall mount arm.
     ctx.strokeStyle = '#3c414e';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.moveTo(c.x, c.y - 8);
-    ctx.lineTo(c.x, c.y);
+    ctx.moveTo(c.x, c.y - 13);
+    ctx.lineTo(c.x, c.y - 2);
     ctx.stroke();
+    ctx.fillStyle = '#2c2f36';
+    rr(ctx, c.x - 8, c.y - 17, 16, 6, 2);
+    ctx.fill();
     ctx.save();
     ctx.translate(c.x, c.y);
     ctx.rotate(c.facing);
-    // Body: a real little camera, lens toward facing.
-    const bg = ctx.createLinearGradient(0, -8, 0, 8);
-    bg.addColorStop(0, '#4a505e');
-    bg.addColorStop(0.5, '#23262e');
+    // Body: a chunky little camera, lens toward facing.
+    const bg = ctx.createLinearGradient(0, -11, 0, 11);
+    bg.addColorStop(0, '#59616f');
+    bg.addColorStop(0.5, '#262a33');
     bg.addColorStop(1, '#101216');
     ctx.fillStyle = bg;
-    rr(ctx, -9, -7.5, 19, 15, 3.5);
+    rr(ctx, -13, -10.5, 27, 21, 5);
     ctx.fill();
-    ctx.strokeStyle = '#5b6270';
-    ctx.lineWidth = 1;
-    rr(ctx, -9, -7.5, 19, 15, 3.5);
+    ctx.strokeStyle = '#6b7280';
+    ctx.lineWidth = 1.2;
+    rr(ctx, -13, -10.5, 27, 21, 5);
     ctx.stroke();
     ctx.fillStyle = '#171a20';
     ctx.beginPath();
-    ctx.moveTo(10, -5);
-    ctx.lineTo(16, -3.4);
-    ctx.lineTo(16, 3.4);
-    ctx.lineTo(10, 5);
+    ctx.moveTo(14, -7);
+    ctx.lineTo(21, -4.6);
+    ctx.lineTo(21, 4.6);
+    ctx.lineTo(14, 7);
     ctx.closePath();
     ctx.fill();
     ctx.fillStyle = hot ? '#ff2d2d' : '#7dd3fc';
     ctx.beginPath();
-    ctx.arc(15.4, 0, 2.6, 0, Math.PI * 2);
+    ctx.arc(20.2, 0, 3.6, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
     ctx.beginPath();
-    ctx.arc(14.6, -0.8, 0.9, 0, Math.PI * 2);
+    ctx.arc(19.2, -1.2, 1.2, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-    // Recording LED (blinks on the staged clock) and a name plaque.
+    // Recording LED and a name plaque.
     const ledOn = Math.sin(game.time * 4 + c.x) > -0.2;
     ctx.fillStyle = ledOn ? '#ff4444' : '#5c1a1a';
     ctx.beginPath();
-    ctx.arc(c.x - 7, c.y - 11, 2.1, 0, Math.PI * 2);
+    ctx.arc(c.x - 10, c.y - 14, 2.6, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = 'rgba(8,6,14,0.82)';
-    rr(ctx, c.x - 21, c.y + 11, 42, 11, 3);
+    ctx.fillStyle = 'rgba(8,6,14,0.85)';
+    rr(ctx, c.x - 24, c.y + 14, 48, 13, 3);
     ctx.fill();
     ctx.fillStyle = '#f0a0a0';
-    ctx.font = '700 8px system-ui, sans-serif';
+    ctx.font = '700 9px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('● CAMERA', c.x, c.y + 19.5);
+    ctx.fillText('● CAMERA', c.x, c.y + 23.5);
   }
 }
 
-// --- Actors: drawn sprites ----------------------------------------------
+// --- Actors: upright figures -------------------------------------------
+// A figure stands ~52px tall on its ground point: shadow at the feet
+// (y+15), legs, torso, head at y-37. Facing is read from the head and
+// the flashlight arm, never from rotating the whole body.
 
-function drawGuardSprite(ctx, g) {
-  shadowEllipse(ctx, g.x, g.y + 12, 14, 5.5, 0.42);
-  ctx.save();
-  ctx.translate(g.x, g.y);
-  ctx.rotate(g.facing);
-  // Arms at the shoulders.
-  ctx.fillStyle = '#14264d';
+function facingDir(facing) {
+  const s = Math.sin(facing);
+  const c = Math.cos(facing);
+  if (s > 0.55) return 'front';
+  if (s < -0.55) return 'back';
+  return c > 0 ? 'right' : 'left';
+}
+
+function drawGuardFigure(ctx, g, time) {
+  const dir = facingDir(g.facing);
+  const feetY = g.y + 15;
+  const bob = Math.sin(time * 2 + g.x * 0.35) * 0.7;
+  const hipY = feetY - 15;
+  const torsoTop = feetY - 37 + bob;
+  shadowEllipse(ctx, g.x, feetY + 1, 15.5, 5.5, 0.44);
+  // Legs and shoes.
+  ctx.fillStyle = '#1b2a4a';
+  ctx.fillRect(g.x - 9.5, hipY, 7, 14);
+  ctx.fillRect(g.x + 2.5, hipY, 7, 14);
+  ctx.fillStyle = '#0c0e13';
   ctx.beginPath();
-  ctx.arc(2, -13, 4.2, 0, Math.PI * 2);
-  ctx.arc(2, 13, 4.2, 0, Math.PI * 2);
+  ctx.ellipse(g.x - 6, feetY + 0.5, 5.4, 2.8, 0, 0, Math.PI * 2);
+  ctx.ellipse(g.x + 6, feetY + 0.5, 5.4, 2.8, 0, 0, Math.PI * 2);
   ctx.fill();
-  // Uniform body with a light falloff toward the facing edge.
-  const bg = ctx.createLinearGradient(-13, 0, 13, 0);
-  bg.addColorStop(0, '#16294f');
-  bg.addColorStop(0.55, '#26509e');
-  bg.addColorStop(1, '#3a63b0');
-  ctx.fillStyle = bg;
+  // Torso: navy uniform with belt, badge and epaulettes.
+  const tg = ctx.createLinearGradient(g.x - 14, torsoTop, g.x + 14, torsoTop + 24);
+  tg.addColorStop(0, '#33549c');
+  tg.addColorStop(0.55, '#223d75');
+  tg.addColorStop(1, '#152a55');
+  ctx.fillStyle = tg;
+  rr(ctx, g.x - 13.5, torsoTop, 27, 24, 6);
+  ctx.fill();
+  ctx.fillStyle = '#10182c';
+  ctx.fillRect(g.x - 13.5, torsoTop + 19, 27, 4.4);
+  ctx.fillStyle = GOLD;
+  ctx.fillRect(g.x - 2.2, torsoTop + 19.4, 4.4, 3.6);
+  ctx.fillStyle = '#7d94c4';
+  ctx.fillRect(g.x - 13.5, torsoTop + 1.5, 8, 3.4);
+  ctx.fillRect(g.x + 5.5, torsoTop + 1.5, 8, 3.4);
+  ctx.fillStyle = '#e8bc62';
   ctx.beginPath();
-  ctx.arc(0, 0, 13, 0, Math.PI * 2);
+  ctx.arc(g.x - 7.5, torsoTop + 10, 2.4, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = '#081226';
-  ctx.lineWidth = 1.6;
+  // Idle arm along the body.
+  ctx.strokeStyle = '#1d3465';
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(g.x - 13, torsoTop + 5);
+  ctx.lineTo(g.x - 14.5, torsoTop + 19);
   ctx.stroke();
-  // Shoulder strap and a gold badge.
+  // Flashlight arm, reaching toward facing; the light itself.
+  const hx = g.x + Math.cos(g.facing) * 16;
+  const hy = torsoTop + 13 + Math.sin(g.facing) * 7;
+  ctx.strokeStyle = '#24457f';
+  ctx.beginPath();
+  ctx.moveTo(g.x + 12, torsoTop + 5);
+  ctx.lineTo(hx, hy);
+  ctx.stroke();
   ctx.save();
-  ctx.beginPath();
-  ctx.arc(0, 0, 12.4, 0, Math.PI * 2);
-  ctx.clip();
-  ctx.rotate(-0.55);
-  ctx.fillStyle = 'rgba(6,8,18,0.55)';
-  ctx.fillRect(-14, -2.6, 28, 5.2);
-  ctx.restore();
-  ctx.fillStyle = '#e8bc62';
-  ctx.beginPath();
-  ctx.arc(4.5, -6, 1.9, 0, Math.PI * 2);
+  ctx.translate(hx, hy);
+  ctx.rotate(g.facing);
+  ctx.fillStyle = '#15161c';
+  rr(ctx, -2, -3, 11, 6, 2);
   ctx.fill();
-  // Head: skin, then the navy cap as a crescent with a brim.
-  const hg = ctx.createRadialGradient(4.5, -1.5, 1, 3, 0, 7.5);
-  hg.addColorStop(0, '#f2c79e');
-  hg.addColorStop(1, '#c68d58');
-  ctx.fillStyle = hg;
+  ctx.fillStyle = '#ffeeb8';
   ctx.beginPath();
-  ctx.arc(3, 0, 6.8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#1d3468';
-  ctx.beginPath();
-  ctx.arc(1.6, 0, 7.1, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = hg;
-  ctx.beginPath();
-  ctx.arc(4.6, 0, 5.4, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#2c4f96';
-  ctx.beginPath();
-  ctx.ellipse(10.6, 0, 3.4, 5, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#e8bc62';
-  ctx.beginPath();
-  ctx.arc(1.6, 0, 1.5, 0, Math.PI * 2);
-  ctx.fill();
-  // Flashlight in the right hand.
-  ctx.fillStyle = '#9aa3b2';
-  ctx.fillRect(6, 12.4, 5.5, 3);
-  ctx.fillStyle = '#fff3c4';
-  ctx.beginPath();
-  ctx.arc(11.8, 13.9, 1.5, 0, Math.PI * 2);
+  ctx.arc(9.6, 0, 2.2, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
-  if (g.sees > 0 || g.state === 'converge' || g.state === 'investigate') {
-    const alert = g.sees > 0 || g.state === 'converge';
-    ctx.font = '900 20px system-ui, sans-serif';
+  ctx.lineCap = 'butt';
+  // Head: skin, navy cap; the face follows the facing direction.
+  const headCY = torsoTop - 8.5;
+  ctx.fillStyle = '#e8b98d';
+  ctx.beginPath();
+  ctx.arc(g.x, headCY, 8.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#1d3465';
+  ctx.beginPath();
+  ctx.arc(g.x, headCY - 1.6, 8.8, Math.PI * 1.02, Math.PI * 1.98);
+  ctx.fill();
+  if (dir === 'front') {
+    ctx.fillRect(g.x - 8.8, headCY - 3.4, 17.6, 3);
+    ctx.fillStyle = '#2a2118';
+    ctx.beginPath();
+    ctx.arc(g.x - 3.1, headCY + 2.2, 1.15, 0, Math.PI * 2);
+    ctx.arc(g.x + 3.1, headCY + 2.2, 1.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(42,33,24,0.75)';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(g.x - 2.4, headCY + 6.1);
+    ctx.lineTo(g.x + 2.4, headCY + 6.1);
+    ctx.stroke();
+  } else if (dir === 'back') {
+    ctx.fillStyle = '#1d3465';
+    ctx.beginPath();
+    ctx.arc(g.x, headCY + 0.6, 8.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#16294f';
+    ctx.fillRect(g.x - 8.4, headCY + 5.4, 16.8, 2.6);
+  } else {
+    const s = dir === 'right' ? 1 : -1;
+    ctx.fillStyle = '#1d3465';
+    ctx.fillRect(g.x + (s > 0 ? 1 : -10.4), headCY - 3.4, 9.4, 3);
+    ctx.fillStyle = '#2a2118';
+    ctx.beginPath();
+    ctx.arc(g.x + s * 4.4, headCY + 2.2, 1.15, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Alert marks.
+  if (g.sees > 0 || g.state === 'converge') {
+    ctx.font = '900 17px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = 'rgba(10,4,8,0.85)';
-    const ch = alert ? '!' : '?';
-    ctx.strokeText(ch, g.x, g.y - 19);
-    ctx.fillStyle = alert ? '#ff5544' : '#ffd700';
-    ctx.fillText(ch, g.x, g.y - 19);
+    ctx.lineWidth = 3.4;
+    ctx.strokeStyle = 'rgba(20,4,4,0.85)';
+    ctx.strokeText('!', g.x, headCY - 14);
+    ctx.fillStyle = '#ff5147';
+    ctx.fillText('!', g.x, headCY - 14);
+  } else if (g.state === 'investigate') {
+    ctx.font = '900 15px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 3.2;
+    ctx.strokeStyle = 'rgba(20,14,2,0.85)';
+    ctx.strokeText('?', g.x, headCY - 13);
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillText('?', g.x, headCY - 13);
   }
 }
 
-function drawThiefSprite(ctx, game) {
+function drawThiefFigure(ctx, game) {
   const t = game.thief;
-  shadowEllipse(ctx, t.x, t.y + 11, 13, 5, 0.42);
-  // Soft teal halo keeps her findable in a busy frame.
-  const halo = ctx.createRadialGradient(t.x, t.y, 4, t.x, t.y, 31);
-  halo.addColorStop(0, 'rgba(45,212,191,0.42)');
-  halo.addColorStop(1, 'rgba(45,212,191,0)');
-  ctx.fillStyle = halo;
-  ctx.beginPath();
-  ctx.arc(t.x, t.y, 31, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.save();
-  ctx.translate(t.x, t.y);
-  ctx.rotate(t.facing);
-  // Loot sack slung on her back once the diamond is hers.
+  const dir = facingDir(t.facing);
+  const feetY = t.y + 15;
+  const bob = t.moving ? Math.sin(game.time * 11) * 1.3 : Math.sin(game.time * 2.2) * 0.6;
+  const hipY = feetY - 14;
+  const torsoTop = feetY - 35 + bob;
+  shadowEllipse(ctx, t.x, feetY + 1, 14.5, 5.2, 0.46);
+  // The loot sack rides on her back once the diamond is lifted.
   if (game.hasLoot) {
-    const sg = ctx.createRadialGradient(-12, -2, 1, -11, 0, 8);
-    sg.addColorStop(0, '#9a6c3c');
-    sg.addColorStop(1, '#54381e');
-    ctx.fillStyle = sg;
+    const bx = t.x - Math.cos(t.facing) * 9;
+    const by = torsoTop + 13 - Math.sin(t.facing) * 4;
+    ctx.fillStyle = '#6d5133';
     ctx.beginPath();
-    ctx.arc(-11, 0, 6.8, 0, Math.PI * 2);
+    ctx.arc(bx, by, 10.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = '#3c2712';
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-    ctx.fillStyle = '#6e4a26';
+    ctx.fillStyle = '#543e26';
     ctx.beginPath();
-    ctx.moveTo(-11, -6.8);
-    ctx.lineTo(-8.6, -10);
-    ctx.lineTo(-13.4, -10);
+    ctx.moveTo(bx - 3.4, by - 9.5);
+    ctx.lineTo(bx + 3.4, by - 9.5);
+    ctx.lineTo(bx, by - 14.5);
     ctx.closePath();
     ctx.fill();
+    ctx.fillStyle = 'rgba(125,211,252,0.85)';
+    ctx.beginPath();
+    ctx.arc(bx + 3.6, by + 2.5, 2.2, 0, Math.PI * 2);
+    ctx.fill();
   }
-  // Body: near-black with a cold rim light on the rear arc.
-  const bg = ctx.createLinearGradient(-12, 0, 12, 0);
-  bg.addColorStop(0, '#0c0d11');
-  bg.addColorStop(0.6, '#23252e');
-  bg.addColorStop(1, '#3a3e4a');
-  ctx.fillStyle = bg;
+  // Legs and soft shoes.
+  ctx.fillStyle = '#17171d';
+  ctx.fillRect(t.x - 8.5, hipY, 6.4, 13);
+  ctx.fillRect(t.x + 2.1, hipY, 6.4, 13);
+  ctx.fillStyle = '#08080b';
   ctx.beginPath();
-  ctx.arc(0, 0, 12, 0, Math.PI * 2);
+  ctx.ellipse(t.x - 5.2, feetY + 0.5, 5, 2.6, 0, 0, Math.PI * 2);
+  ctx.ellipse(t.x + 5.2, feetY + 0.5, 5, 2.6, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(94,234,212,0.4)';
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.arc(0, 0, 12.6, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.strokeStyle = '#000000';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.arc(0, 0, 12, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(94,234,212,0.85)';
+  // Torso: black jacket, sack strap across it.
+  const tg = ctx.createLinearGradient(t.x - 12, torsoTop, t.x + 12, torsoTop + 22);
+  tg.addColorStop(0, '#2b2b33');
+  tg.addColorStop(0.6, '#17171d');
+  tg.addColorStop(1, '#0b0b0f');
+  ctx.fillStyle = tg;
+  rr(ctx, t.x - 12, torsoTop, 24, 22.5, 6);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(217,164,65,0.4)';
   ctx.lineWidth = 2.6;
   ctx.beginPath();
-  ctx.arc(0, 0, 11, Math.PI * 0.62, Math.PI * 1.28);
+  ctx.moveTo(t.x - 9, torsoTop + 3);
+  ctx.lineTo(t.x + 8, torsoTop + 19);
   ctx.stroke();
-  // Crimson scarf tail at the neck.
-  ctx.fillStyle = '#8c2434';
+  ctx.strokeStyle = '#101014';
+  ctx.lineWidth = 5.6;
+  ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(-9, 3);
-  ctx.lineTo(-16, 6.5);
-  ctx.lineTo(-9.5, 8.5);
-  ctx.closePath();
-  ctx.fill();
-  // Hooded head with a pale eye stripe across the mask.
-  ctx.fillStyle = '#14151b';
-  ctx.beginPath();
-  ctx.arc(2.5, 0, 7.2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.8)';
-  ctx.lineWidth = 1;
+  ctx.moveTo(t.x - 11.5, torsoTop + 4.5);
+  ctx.lineTo(t.x - 13, torsoTop + 17);
+  ctx.moveTo(t.x + 11.5, torsoTop + 4.5);
+  ctx.lineTo(t.x + 13, torsoTop + 17);
   ctx.stroke();
-  ctx.fillStyle = '#05060a';
+  ctx.lineCap = 'butt';
+  // Head: hood, shadowed face, mask stripe and eyes by direction.
+  const headCY = torsoTop - 8;
+  ctx.fillStyle = '#101016';
   ctx.beginPath();
-  ctx.ellipse(5.4, 0, 3.8, 5.2, 0, 0, Math.PI * 2);
+  ctx.arc(t.x, headCY, 9.6, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = '#f5f0e6';
-  rr(ctx, 6.2, -3.3, 2.3, 6.6, 1.1);
-  ctx.fill();
-  ctx.fillStyle = '#101018';
+  ctx.strokeStyle = 'rgba(150,200,255,0.30)';
+  ctx.lineWidth = 1.3;
   ctx.beginPath();
-  ctx.arc(7.2, -1.7, 0.85, 0, Math.PI * 2);
-  ctx.arc(7.2, 1.7, 0.85, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-  if (game.hasLoot) {
-    const bx = t.x - Math.cos(t.facing) * 11;
-    const by = t.y - Math.sin(t.facing) * 11;
-    sparkle(ctx, bx - 3, by - 8, 4.6, 0.55 + 0.35 * Math.sin(game.time * 6));
-  }
-  if (game.nearLoot && !game.hasLoot) {
-    ctx.fillStyle = 'rgba(8,6,14,0.82)';
-    const label = 'E — GRAB THE DIAMOND';
-    ctx.font = '700 12.5px system-ui, sans-serif';
-    const w = ctx.measureText(label).width + 18;
-    rr(ctx, t.x - w / 2, t.y - 40, w, 20, 9);
+  ctx.arc(t.x, headCY, 9.6, Math.PI * 1.25, Math.PI * 1.8);
+  ctx.stroke();
+  if (dir === 'front') {
+    ctx.fillStyle = '#caa27e';
+    ctx.beginPath();
+    ctx.ellipse(t.x, headCY + 2.6, 6.4, 5.6, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = CREAM;
+    ctx.fillStyle = '#0a0a0e';
+    ctx.fillRect(t.x - 7.6, headCY - 0.6, 15.2, 4.4);
+    ctx.fillStyle = '#f5f7fa';
+    ctx.beginPath();
+    ctx.arc(t.x - 3, headCY + 1.6, 1.25, 0, Math.PI * 2);
+    ctx.arc(t.x + 3, headCY + 1.6, 1.25, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (dir === 'back') {
+    ctx.fillStyle = '#0b0b10';
+    ctx.beginPath();
+    ctx.arc(t.x, headCY + 1, 8.6, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    const s = dir === 'right' ? 1 : -1;
+    ctx.fillStyle = '#caa27e';
+    ctx.beginPath();
+    ctx.ellipse(t.x + s * 2.4, headCY + 2.6, 5, 5.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#0a0a0e';
+    ctx.fillRect(t.x + (s > 0 ? -1 : -7.4), headCY - 0.6, 8.4, 4.4);
+    ctx.fillStyle = '#f5f7fa';
+    ctx.beginPath();
+    ctx.arc(t.x + s * 4.6, headCY + 1.6, 1.25, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (game.nearLoot) {
+    ctx.fillStyle = 'rgba(10,8,16,0.88)';
+    rr(ctx, t.x - 10, headCY - 32, 20, 15, 4);
+    ctx.fill();
+    ctx.strokeStyle = GOLD;
+    ctx.lineWidth = 1;
+    rr(ctx, t.x - 10, headCY - 32, 20, 15, 4);
+    ctx.stroke();
+    ctx.fillStyle = GOLD;
+    ctx.font = '700 10.5px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(label, t.x, t.y - 26);
+    ctx.fillText('E', t.x, headCY - 20.5);
   }
 }
 
-function drawActors(ctx, game) {
+// --- The scene, depth-sorted -------------------------------------------
+
+function drawScene(ctx, game) {
+  const items = [];
+  for (const r of game.level.solids) {
+    if (r.kind === 'case') items.push({ y: r.y + r.h, draw: () => drawCase(ctx, r, game.time) });
+    else if (r.kind === 'plinth') items.push({ y: r.y + r.h, draw: () => drawPlinth(ctx, r) });
+    else if (r.kind === 'post') items.push({ y: r.y + r.h, draw: () => drawPost(ctx, r) });
+  }
+  const p = game.level.pedestal;
+  items.push({ y: p.y + p.h, draw: () => drawPedestal(ctx, game) });
+  for (const pl of game.level.decor.plants) {
+    items.push({ y: pl.y, draw: () => drawPlant(ctx, pl) });
+  }
+  for (const b of game.level.decor.benches) {
+    items.push({ y: b.y + b.h, draw: () => drawBench(ctx, b) });
+  }
+  for (const g of game.guards) {
+    items.push({ y: g.y + 15, draw: () => drawGuardFigure(ctx, g, game.time) });
+  }
+  items.push({ y: game.thief.y + 15, draw: () => drawThiefFigure(ctx, game) });
+  items.sort((a, b) => a.y - b.y);
+  for (const it of items) it.draw();
+}
+
+function drawNoises(ctx, game) {
   for (const n of game.noises) {
     const a = Math.max(0, 1 - n.t / 0.9);
     ctx.strokeStyle = `rgba(255,215,0,${0.8 * a})`;
@@ -1354,8 +1600,6 @@ function drawActors(ctx, game) {
     ctx.arc(n.x - 1, n.y - 1, 1.2, 0, Math.PI * 2);
     ctx.fill();
   }
-  for (const g of game.guards) drawGuardSprite(ctx, g);
-  drawThiefSprite(ctx, game);
 }
 
 // --- HUD ------------------------------------------------------------------
@@ -1593,14 +1837,13 @@ export function drawGame(ctx, game) {
   ctx.drawImage(game._static, 0, 0);
   drawExit(ctx, game);
   drawWatchers(ctx, game);
-  drawSolids(ctx, game);
-  drawLoot(ctx, game);
+  drawScene(ctx, game);
+  drawNoises(ctx, game);
   drawCameraBodies(ctx, game);
-  drawActors(ctx, game);
   // Night vignette over the hall, under the HUD.
   const vg = ctx.createRadialGradient(640, 440, 330, 640, 440, 830);
   vg.addColorStop(0, 'rgba(3,2,9,0)');
-  vg.addColorStop(1, 'rgba(3,2,9,0.33)');
+  vg.addColorStop(1, 'rgba(3,2,9,0.30)');
   ctx.fillStyle = vg;
   ctx.fillRect(0, HUD_H, VIEW_W, VIEW_H - HUD_H);
   drawHUD(ctx, game);
