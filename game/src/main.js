@@ -148,23 +148,26 @@ function stageShot(name) {
     game.time = 47;
     game.alarm = 34;
     game.peakAlarm = 34;
-    place(game.thief, 470, 470, 0.2);
-    place(gA, 706, 452, 2.6);
-    place(gB, 1040, 560, -Math.PI / 2);
+    place(game.thief, 500, 452, 0.35);
+    place(gA, 700, 438, 2.9);
+    place(gB, 1040, 575, -Math.PI / 2);
     place(gC, 905, 470, 0.4);
-    camA.facing = 1.55;
+    camA.facing = 1.85;
     camB.facing = 2.9;
     game.objective = 'Cross the hall and lift the Aurora Diamond';
   } else if (name === 'patrol') {
     game.time = 83;
     game.alarm = 12;
     game.peakAlarm = 21;
-    place(game.thief, 427, 394, Math.PI);
-    place(gA, 300, 560, 0);
+    // The thief pressed against the egg case's south face while
+    // the hall guard, in the lane just north of the case, sweeps
+    // his cone into its glass — the case itself is her cover.
+    place(game.thief, 415, 428, -Math.PI / 2);
+    place(gA, 415, 262, Math.PI / 2);
     place(gB, 1040, 470, Math.PI / 2);
-    place(gC, 560, 470, Math.PI);
-    camA.facing = 0.7;
-    camB.facing = 2.5;
+    place(gC, 960, 352, -0.5);
+    camA.facing = 1.8;
+    camB.facing = 2.6;
     game.objective = 'Wait for the cone to pass — the case is your cover';
   } else if (name === 'loot') {
     game.time = 121;
@@ -172,29 +175,31 @@ function stageShot(name) {
     game.peakAlarm = 72;
     game.hasLoot = true;
     place(game.thief, 968, 268, Math.PI / 2);
-    place(gA, 430, 560, -0.8);
+    place(gA, 395, 655, -0.8);
     place(gB, 1040, 452, 2.6);
-    place(gC, 838, 340, 0.5);
+    place(gC, 940, 355, Math.atan2(268 - 355, 968 - 940));
     gC.state = 'converge';
     gC.sees = 0.8;
     camA.facing = 1.2;
     camB.facing = 2.75;
     game.objective = 'LOOT SECURED — get back to the EXIT!';
   } else if (name === 'getaway') {
+    // Staged as an in-world moment, NOT the win panel: the thief is
+    // on the exit mat with the sack, alarm at 88, and two guards'
+    // cones converge on her while a third runs in.
     game.time = 118;
     game.alarm = 88;
     game.peakAlarm = 88;
     game.hasLoot = true;
-    place(game.thief, 640, 742, Math.PI / 2);
-    place(gA, 520, 600, 1.9);
-    place(gB, 790, 620, 2.4);
-    place(gC, 950, 500, 2.2);
+    place(game.thief, 640, 738, Math.PI / 2);
+    place(gA, 520, 612, Math.atan2(738 - 612, 640 - 520));
+    place(gB, 768, 618, Math.atan2(738 - 618, 640 - 768));
+    place(gC, 955, 520, Math.atan2(738 - 520, 640 - 955));
     gA.state = 'converge';
     gB.state = 'converge';
     camA.facing = 1.4;
     camB.facing = 2.82;
     game.objective = 'LOOT SECURED — get back to the EXIT!';
-    game.mode = 'win';
   }
   // Detection flags for the frozen frame: recompute honestly so the
   // cones light up only where the thief truly stands in view.

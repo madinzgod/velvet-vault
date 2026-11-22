@@ -1,9 +1,10 @@
-// level.js — the Velvet Vault floor plan, v3: a denser hall built for
-// the 2.5D renderer. Cases are big furniture now (150x88) with room
-// for artifacts that fill them, statue plinths stand in the open
-// floor, and the vault gate is flanked by stone posts. Everything is
-// plain data in canvas pixels (1280x800, HUD bar on top), built by
-// buildLevel() so main.js and the shot stager share one plan.
+// level.js — the Velvet Vault floor plan, v4: fewer, BIGGER cases
+// (186px wide instead of 150) so each artifact can stand large in a
+// lit interior, area rugs under the side clusters, statue plinths
+// filling the south band, and a vault chamber that sits on a raised
+// platform. Everything is plain data in canvas pixels (1280x800,
+// HUD bar on top), built by buildLevel() so main.js and the shot
+// stager share one plan.
 
 export const VIEW_W = 1280;
 export const VIEW_H = 800;
@@ -38,63 +39,73 @@ export function buildLevel() {
     rect(888, 378, 30, 30, 'post'),
     rect(1018, 378, 30, 30, 'post'),
     // Display cases: glass-topped cover the thief can break sight
-    // with. Each carries the artifact the renderer draws standing
-    // large under its glass.
-    rect(96, 176, 150, 88, 'case', 'statue'),
-    rect(352, 124, 150, 84, 'case', 'bust'),
-    rect(560, 176, 150, 88, 'case', 'vase'),
-    rect(352, 268, 150, 88, 'case', 'crown'),
-    rect(96, 452, 150, 88, 'case', 'gems'),
-    rect(352, 530, 88, 140, 'case', 'mask'),
-    rect(872, 560, 150, 88, 'case', 'chalice'),
-    rect(1086, 430, 150, 88, 'case', 'urn'),
-    rect(1086, 560, 150, 88, 'case', 'ruby'),
+    // with. Eight big ones in the hall — each carries the artifact
+    // the renderer draws standing large in its lit interior.
+    rect(84, 168, 186, 104, 'case', 'statue'),
+    rect(322, 146, 186, 104, 'case', 'crown'),
+    rect(530, 168, 180, 104, 'case', 'vase'),
+    rect(322, 296, 186, 104, 'case', 'egg'),
+    rect(84, 478, 186, 104, 'case', 'gems'),
+    rect(836, 548, 180, 104, 'case', 'chalice'),
+    rect(1072, 404, 168, 104, 'case', 'urn'),
+    rect(1072, 548, 168, 104, 'case', 'ruby'),
     // Two low wide cases inside the vault itself: cover for the most
     // dangerous ten seconds of the heist, the grab and the way out.
-    rect(786, 292, 84, 56, 'case', 'coins'),
-    rect(1066, 292, 84, 56, 'case', 'emeralds'),
+    rect(790, 296, 92, 60, 'case', 'coins'),
+    rect(1054, 296, 92, 60, 'case', 'emeralds'),
     // Freestanding statue plinths in the open floor: marble cylinders
-    // a statue stands on, tall enough to break a sight line.
-    rect(180, 610, 58, 58, 'plinth', 'statueGold'),
+    // a statue stands on, tall enough to break a sight line. The
+    // third one fills the south band between the carpet and the
+    // west rug.
+    rect(180, 618, 58, 58, 'plinth', 'statueGold'),
     rect(790, 640, 58, 58, 'plinth', 'statueStone'),
+    rect(452, 684, 56, 56, 'plinth', 'statueGold'),
+    rect(424, 548, 56, 56, 'plinth', 'statueStone'),
   ];
 
   // Pure dressing, never solid: the renderer reads these to furnish
-  // the hall — pilasters, paintings and sconces on the north wall
-  // face, warm light pools on the marble, potted plants, benches
-  // along the south wall, brass rope posts flanking the carpet, and
-  // the round rug under the diamond pedestal.
+  // the hall — pilasters, large paintings and sconces on the north
+  // wall face, warm light pools on the marble, area rugs under the
+  // case clusters, potted plants, benches along the south wall,
+  // brass rope posts flanking the carpet, a brass floor inlay, the
+  // vault's patterned carpet and its steel door.
   const decor = {
     pilastersTop: [120, 470, 790, 1120],
     paintings: [
-      { x: 290, scene: 'landscape' },
-      { x: 990, scene: 'seascape' },
+      { x: 265, scene: 'landscape' },
+      { x: 1015, scene: 'seascape' },
     ],
     sconces: [200, 540, 860, 1180],
     lightPools: [
-      { x: 320, y: 300, r: 250 },
-      { x: 640, y: 230, r: 210 },
-      { x: 250, y: 570, r: 210 },
-      { x: 968, y: 255, r: 195 },
-      { x: 980, y: 630, r: 230 },
-      { x: 640, y: 580, r: 190 },
+      { x: 177, y: 292, r: 165 },
+      { x: 415, y: 270, r: 165 },
+      { x: 620, y: 292, r: 160 },
+      { x: 415, y: 420, r: 150 },
+      { x: 177, y: 602, r: 165 },
+      { x: 926, y: 672, r: 160 },
+      { x: 1156, y: 528, r: 150 },
+      { x: 1156, y: 672, r: 150 },
+      { x: 968, y: 272, r: 185 },
+      { x: 640, y: 590, r: 200 },
+    ],
+    rugs: [
+      { x: 58, y: 146, w: 246, h: 462 },
+      { x: 824, y: 392, w: 428, h: 298 },
     ],
     plants: [
       { x: 56, y: 148 }, { x: 56, y: 724 },
       { x: 1216, y: 724 }, { x: 300, y: 730 }, { x: 500, y: 724 }, { x: 840, y: 730 },
       { x: 764, y: 360 }, { x: 1150, y: 360 },
+      { x: 1228, y: 168 },
     ],
     benches: [
       { x: 170, y: 738, w: 120, h: 28 },
       { x: 950, y: 738, w: 120, h: 28 },
     ],
     ropePostsY: [470, 580, 690],
-    medallions: [
-      { x: 430, y: 468, r: 50 },
-      { x: 905, y: 478, r: 36 },
-    ],
-    vaultRug: { x: 968, y: 238, rx: 122, ry: 57 },
-    vaultDoor: { x: 1096, y: 131 },
+    floorInlay: { x: 42, y: 122, w: 1196, h: 636 },
+    vaultCarpet: { x: 766, y: 166, w: 404, h: 196 },
+    vaultDoor: { x: 1080, y: 137 },
   };
 
   // Decorative floor dressing that is not solid: the burgundy carpet
@@ -129,7 +140,7 @@ export function buildLevel() {
 
   const cameras = [
     { x: 150, y: 102, base: 1.15, sweep: 0.62, speed: 0.55, phase: 0.0, range: 250, half: 0.46 },
-    { x: 1148, y: 152, base: 2.82, sweep: 0.5, speed: 0.42, phase: 2.1, range: 250, half: 0.46 },
+    { x: 1168, y: 170, base: 2.82, sweep: 0.5, speed: 0.42, phase: 2.1, range: 250, half: 0.46 },
   ];
 
   return {
