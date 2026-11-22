@@ -1473,9 +1473,11 @@ function drawExit(ctx, game) {
 
 // --- Cones and cameras -------------------------------------------------
 
-// Softer than v3: the scene must read THROUGH the cone. A radial
-// falloff clipped to the occluded polygon, with only a whisper of
-// an outline.
+// v4.1: v4's cones were too faint in the calm state — on the
+// brightened floor a calm guard cone all but vanished, and the
+// camera sweeps never read at all. The fill is stronger now and
+// the arc carries a soft bright leading edge, while the radial
+// falloff keeps the shape soft and the scene readable through it.
 function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot, mul = 1) {
   if (poly.length < 2) return;
   ctx.save();
@@ -1484,20 +1486,36 @@ function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot, mul = 1) {
   for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
   ctx.closePath();
   ctx.clip();
-  const a = (v) => Math.min(0.85, v * mul);
+  const a = (v) => Math.min(0.9, v * mul);
   const g = ctx.createRadialGradient(ox, oy, 3, ox, oy, range);
-  g.addColorStop(0, `rgba(${rgb},${a(hot ? 0.44 : 0.32)})`);
-  g.addColorStop(0.45, `rgba(${rgb},${a(hot ? 0.25 : 0.17)})`);
-  g.addColorStop(0.8, `rgba(${rgb},${a(hot ? 0.10 : 0.06)})`);
+  g.addColorStop(0, `rgba(${rgb},${a(hot ? 0.60 : 0.52)})`);
+  g.addColorStop(0.45, `rgba(${rgb},${a(hot ? 0.40 : 0.34)})`);
+  g.addColorStop(0.8, `rgba(${rgb},${a(hot ? 0.20 : 0.17)})`);
   g.addColorStop(1, `rgba(${rgb},0)`);
   ctx.fillStyle = g;
   ctx.fillRect(ox - range, oy - range, range * 2, range * 2);
   ctx.restore();
+  // Leading edge: the arc the light reaches to, stroked as a soft
+  // bright rim (a wide low pass under a narrow stronger one) so the
+  // cone's footprint reads at a glance, calm or alert.
+  if (poly.length > 2) {
+    ctx.beginPath();
+    ctx.moveTo(poly[1].x, poly[1].y);
+    for (let i = 2; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, (hot ? 0.30 : 0.26) * mul)})`;
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, (hot ? 0.55 : 0.48) * mul)})`;
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+  }
+  // Faint outline of the whole fan, radial edges included.
   ctx.beginPath();
   ctx.moveTo(poly[0].x, poly[0].y);
   for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
   ctx.closePath();
-  ctx.strokeStyle = `rgba(${rgb},${hot ? 0.35 : 0.2})`;
+  ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, (hot ? 0.32 : 0.24) * mul)})`;
   ctx.lineWidth = 1;
   ctx.stroke();
 }
@@ -1506,14 +1524,20 @@ function drawWatchers(ctx, game) {
   const { solids } = game.level;
   for (const c of game.cameras) {
     // Camera cones get a boost: they land on dark cases and rugs,
-    // and the judge must be able to see the sweep.
-    drawConeSoft(ctx, conePolygon(c.x, c.y, c.facing, c.half, c.range, solids),
-      c.x, c.y, c.range, '255,52,52', c.sees > 0, 1.35);
+    // and the judge must be able to see the sweep. The cone is cast
+    // from just under the mount: the camera origin sits inside the
+    // wall band, and a polygon cast from inside that solid collapses
+    // to a point — the lens hangs below the wall face, so the light
+    // starts there too.
+    const ox = c.x;
+    const oy = c.y + 10;
+    drawConeSoft(ctx, conePolygon(ox, oy, c.facing, c.half, c.range, solids),
+      ox, oy, c.range, '255,52,52', c.sees > 0, 1.3);
   }
   for (const g of game.guards) {
     const hot = g.sees > 0 || g.state === 'converge';
     drawConeSoft(ctx, conePolygon(g.x, g.y, g.facing, g.half, g.range, solids),
-      g.x, g.y, g.range, hot ? '255,96,40' : '255,186,64', hot);
+      g.x, g.y, g.range, hot ? '255,96,40' : '255,200,92', hot);
     // Flashlight glint at the cone's origin.
     const fg = ctx.createRadialGradient(g.x, g.y, 1, g.x, g.y, 16);
     fg.addColorStop(0, 'rgba(255,240,200,0.5)');

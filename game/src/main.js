@@ -163,7 +163,11 @@ function stageShot(name) {
     // the hall guard, in the lane just north of the case, sweeps
     // his cone into its glass — the case itself is her cover.
     place(game.thief, 415, 428, -Math.PI / 2);
-    place(gA, 415, 262, Math.PI / 2);
+    // gA stands 10px further north than v4 staged him: with his
+    // feet almost on the egg case, the cone's whole run was sprite
+    // and glass and the fan never showed on the floor. From here
+    // the fan opens across the lane before it hits the case.
+    place(gA, 415, 252, Math.PI / 2);
     place(gB, 1040, 470, Math.PI / 2);
     place(gC, 960, 352, -0.5);
     camA.facing = 1.8;
