@@ -171,10 +171,10 @@ function stageShot(name) {
     game.alarm = 72;
     game.peakAlarm = 72;
     game.hasLoot = true;
-    place(game.thief, 968, 252, -Math.PI / 2);
+    place(game.thief, 968, 276, Math.PI / 2);
     place(gA, 430, 560, -0.8);
     place(gB, 1052, 430, 2.6);
-    place(gC, 838, 322, 0.5);
+    place(gC, 838, 356, 0.5);
     gC.state = 'converge';
     gC.sees = 0.8;
     camA.facing = 1.2;

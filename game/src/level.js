@@ -7,8 +7,10 @@ export const VIEW_W = 1280;
 export const VIEW_H = 800;
 export const HUD_H = 64;
 
-function rect(x, y, w, h, kind) {
-  return { x, y, w, h, kind };
+function rect(x, y, w, h, kind, art) {
+  const r = { x, y, w, h, kind };
+  if (art) r.art = art;
+  return r;
 }
 
 export function buildLevel() {
@@ -28,20 +30,50 @@ export function buildLevel() {
     rect(724, 116, 488, 18, 'vault'),
     rect(1194, 116, 18, 288, 'vault'),
     // Display cases: glass-topped cover the thief can break sight with.
-    rect(150, 300, 96, 54, 'case'),
-    rect(150, 520, 96, 54, 'case'),
-    rect(330, 190, 96, 54, 'case'),
-    rect(330, 470, 54, 96, 'case'),
-    rect(470, 300, 96, 54, 'case'),
-    rect(520, 600, 96, 54, 'case'),
-    rect(560, 180, 96, 54, 'case'),
-    rect(880, 560, 96, 54, 'case'),
-    rect(1064, 596, 96, 54, 'case'),
+    // Each carries the artifact the renderer draws under its glass.
+    rect(150, 300, 96, 54, 'case', 'vase'),
+    rect(150, 520, 96, 54, 'case', 'gems'),
+    rect(330, 190, 96, 54, 'case', 'crown'),
+    rect(330, 470, 54, 96, 'case', 'mask'),
+    rect(470, 300, 96, 54, 'case', 'bust'),
+    rect(520, 600, 96, 54, 'case', 'urn'),
+    rect(560, 180, 96, 54, 'case', 'globe'),
+    rect(880, 560, 96, 54, 'case', 'chalice'),
+    rect(1064, 596, 96, 54, 'case', 'ruby'),
+    rect(180, 150, 96, 54, 'case', 'easel'),
+    rect(64, 640, 96, 54, 'case', 'mask'),
     // Two low plinths inside the vault itself: cover for the most
     // dangerous ten seconds of the heist, the grab and the way out.
-    rect(800, 296, 64, 44, 'case'),
-    rect(1072, 296, 64, 44, 'case'),
+    rect(800, 296, 64, 44, 'case', 'coins'),
+    rect(1072, 296, 64, 44, 'case', 'vase'),
   ];
+
+  // Pure dressing, never solid: the renderer reads these to furnish
+  // the hall — pilasters and paintings on the north wall face, potted
+  // plants in the corners, benches along the south wall, brass rope
+  // posts flanking the carpet, and a marble inlay medallion.
+  const decor = {
+    pilastersTop: [86, 280, 474, 668],
+    paintings: [
+      { x: 196, scene: 'landscape' },
+      { x: 390, scene: 'portrait' },
+      { x: 584, scene: 'seascape' },
+    ],
+    vaultPaintings: [
+      { x: 838, scene: 'portrait' },
+      { x: 1028, scene: 'landscape' },
+    ],
+    plants: [
+      { x: 56, y: 132 }, { x: 56, y: 716 },
+      { x: 1204, y: 716 }, { x: 764, y: 360 }, { x: 1170, y: 360 },
+    ],
+    benches: [
+      { x: 176, y: 736, w: 116, h: 26 },
+      { x: 896, y: 736, w: 116, h: 26 },
+    ],
+    ropePosts: [428, 516, 604, 692],
+    medallion: { x: 330, y: 382, r: 56 },
+  };
 
   // Decorative floor dressing that is not solid: the burgundy carpet
   // runner from the entrance to the vault, and the vault's inner floor.
@@ -81,6 +113,7 @@ export function buildLevel() {
     solids,
     carpet,
     vaultFloor,
+    decor,
     guards,
     cameras,
     spawn: { x: 640, y: 706 },
