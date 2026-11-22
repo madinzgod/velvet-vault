@@ -119,117 +119,43 @@ function drawDiamondGem(ctx, x, y, s, cTop, cMid, cDeep) {
   ctx.restore();
 }
 
-// --- v5 illustrated assets ---------------------------------------------
-// v5 changes the art MEDIUM. The hall's floor, walls, paintings,
-// plants, benches and carpet are no longer drawn shape by shape:
-// they come from one generated painterly illustration
-// (assets/hall.jpg), and the actors are generated character
-// sprites (assets/guard.png, assets/thief.png) photographed on
-// solid magenta and chroma-keyed to transparency once at load.
-// Everything gameplay-shaped — cases, artifacts, the vault, the
-// cones, the HUD — is still drawn in code exactly as in v4.1, and
-// if any asset fails to load the v4.1 procedural rendering below
+// --- The illustrated hall (v5; actors reverted in v5.1) -----------------
+// The hall's floor, walls, paintings, plants, benches and carpet
+// are no longer drawn shape by shape: they come from one generated
+// painterly illustration (assets/hall.jpg). Everything
+// gameplay-shaped — cases, artifacts, the vault, the cones, the
+// HUD — is still drawn in code exactly as in v4.1, and if the
+// illustration fails to load the v4.1 procedural rendering below
 // takes over untouched, so the game can never break on a missing
-// file. Asset URLs are relative to game/index.html, so they keep
-// working when main.ts copies game/ into the output directory.
+// file. The actors are the v4.1 code-drawn figures: v5 briefly
+// used generated character sprites here, but at full-frame size
+// they read as dark crumpled blobs rather than people, so the
+// sprites (and their chroma-key path) were removed again. The
+// asset URL is relative to game/index.html, so it keeps working
+// when main.ts copies game/ into the output directory.
 
-const ASSETS = { epoch: 0, settled: 0, hall: null, guard: null, thief: null };
+const ASSETS = { epoch: 0, settled: 0, hall: null };
 
 function illustrated() {
   return !!(ASSETS.hall && ASSETS.hall.naturalWidth > 0);
 }
 
-// Key one magenta-backed sprite: pixels near pure magenta become
-// transparent with a feathered edge, edge pixels are un-mixed from
-// the magenta they were blended with (so no pink fringe survives),
-// and the result is cropped to the figure's bounding box.
-function keySprite(img) {
-  const MAX = 360;
-  const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
-  const w = Math.max(1, Math.round(img.naturalWidth * scale));
-  const h = Math.max(1, Math.round(img.naturalHeight * scale));
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const x = c.getContext('2d', { willReadFrequently: true });
-  x.drawImage(img, 0, 0, w, h);
-  let data;
-  try {
-    data = x.getImageData(0, 0, w, h);
-  } catch {
-    return null; // tainted or unreadable: fall back to code figures
-  }
-  const px = data.data;
-  let minX = w;
-  let minY = h;
-  let maxX = -1;
-  let maxY = -1;
-  for (let i = 0; i < px.length; i += 4) {
-    const r = px[i];
-    const g = px[i + 1];
-    const b = px[i + 2];
-    const d = Math.hypot(r - 255, g, b - 255);
-    let a = 255;
-    if (d <= 70) a = 0;
-    else if (d < 190) a = Math.round(((d - 70) / 120) * 255);
-    if (a > 0 && a < 255) {
-      const af = a / 255;
-      const ia = 1 - af;
-      px[i] = Math.max(0, Math.min(255, (r - ia * 255) / af));
-      px[i + 1] = Math.max(0, Math.min(255, g / af));
-      px[i + 2] = Math.max(0, Math.min(255, (b - ia * 255) / af));
-    }
-    px[i + 3] = a;
-    if (a > 12) {
-      const X = (i / 4) % w;
-      const Y = Math.floor(i / 4 / w);
-      if (X < minX) minX = X;
-      if (X > maxX) maxX = X;
-      if (Y < minY) minY = Y;
-      if (Y > maxY) maxY = Y;
-    }
-  }
-  if (maxX < 0) return null;
-  x.putImageData(data, 0, 0);
-  const cw = maxX - minX + 1;
-  const ch = maxY - minY + 1;
-  const out = document.createElement('canvas');
-  out.width = cw;
-  out.height = ch;
-  out.getContext('2d').drawImage(c, minX, minY, cw, ch, 0, 0, cw, ch);
-  return { canvas: out, w: cw, h: ch };
-}
-
 function assetSettled() {
   ASSETS.settled++;
   ASSETS.epoch++;
-  if (ASSETS.settled >= 3) window.__velvetAssetsSettled = true;
+  window.__velvetAssetsSettled = true;
 }
 
 function loadAsset(src, key) {
   const img = new Image();
   img.onload = () => {
-    ASSETS[key] = key === 'hall' ? img : keySprite(img);
+    ASSETS[key] = img;
     assetSettled();
   };
   img.onerror = () => assetSettled();
   img.src = src;
 }
 loadAsset('assets/hall.jpg', 'hall');
-loadAsset('assets/guard.png', 'guard');
-loadAsset('assets/thief.png', 'thief');
-
-// Draw a keyed sprite centred on (x, y), rotated so the figure's
-// head — up in the source image — points along `facing`.
-function drawSprite(ctx, spr, x, y, facing, size) {
-  const s = size / spr.h;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(facing + Math.PI / 2);
-  ctx.scale(s, s);
-  ctx.drawImage(spr.canvas, -spr.w / 2, -spr.h / 2);
-  ctx.restore();
-}
 
 // --- The static hall ------------------------------------------------
 
@@ -459,13 +385,53 @@ function buildStatic(game) {
     paintSlabs(ctx, 24, 104, 1256, 776, 213, 168,
       ['#3a3f52', '#343949', '#3f4459', '#313644', '#383d4e'], '#22242e');
   }
-  // -- The vault's own floor: warmer stone.
+  // -- The vault's own floor: dark warm marble — charcoal-brown
+  // slabs with the same mottling and veining as the hall's stone,
+  // so the chamber reads as a room floored in a darker cut of the
+  // same marble, not as a flat maroon panel pasted over the hall.
   paintSlabs(ctx, vaultFloor.x, vaultFloor.y, vaultFloor.x + vaultFloor.w,
     vaultFloor.y + vaultFloor.h, 113, 124,
-    ['#463a52', '#413550', '#4a3e56'], '#2c2338');
-  ctx.strokeStyle = 'rgba(217,164,65,0.4)';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(vaultFloor.x + 7, vaultFloor.y + 7, vaultFloor.w - 14, vaultFloor.h - 14);
+    ['#3b2d2f', '#362a2c', '#403335'], '#211719');
+  // -- A pale marble border frame set into the platform's edge:
+  // a light stone band (veined, with a dark seam on each side)
+  // running the platform's perimeter between the walls and the
+  // carpet, tying the chamber's floor to the hall's pale marble.
+  const vf = vaultFloor;
+  const fbg = ctx.createLinearGradient(vf.x, vf.y, vf.x, vf.y + vf.h);
+  fbg.addColorStop(0, '#c9bda6');
+  fbg.addColorStop(0.5, '#b3a68d');
+  fbg.addColorStop(1, '#998c73');
+  ctx.fillStyle = fbg;
+  ctx.fillRect(vf.x, vf.y, vf.w, 11);
+  ctx.fillRect(vf.x, vf.y + vf.h - 11, vf.w, 11);
+  ctx.fillRect(vf.x, vf.y, 11, vf.h);
+  ctx.fillRect(vf.x + vf.w - 11, vf.y, 11, vf.h);
+  // Vein strokes wandering along the north and south bands.
+  ctx.strokeStyle = 'rgba(92,80,62,0.4)';
+  ctx.lineWidth = 1.1;
+  for (let i = 0; i < 7; i++) {
+    const vx = vf.x + 26 + hash2(i, 3) * (vf.w - 70);
+    ctx.beginPath();
+    ctx.moveTo(vx, vf.y + 2.5);
+    ctx.lineTo(vx + 13 - hash2(i, 5) * 22, vf.y + 8.5);
+    ctx.stroke();
+    const vx2 = vf.x + 26 + hash2(i, 11) * (vf.w - 70);
+    ctx.beginPath();
+    ctx.moveTo(vx2, vf.y + vf.h - 8.5);
+    ctx.lineTo(vx2 + 13 - hash2(i, 13) * 22, vf.y + vf.h - 2.5);
+    ctx.stroke();
+  }
+  // Seams: a dark line where the frame meets the wall, and one
+  // where it meets the dark floor, with a gold hairline inside.
+  ctx.strokeStyle = 'rgba(14,9,9,0.55)';
+  ctx.lineWidth = 1.6;
+  ctx.strokeRect(vf.x + 0.8, vf.y + 0.8, vf.w - 1.6, vf.h - 1.6);
+  ctx.strokeStyle = 'rgba(26,17,14,0.65)';
+  ctx.lineWidth = 1.4;
+  ctx.strokeRect(vf.x + 11, vf.y + 11, vf.w - 22, vf.h - 22);
+  ctx.strokeStyle = 'rgba(217,164,65,0.35)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(vf.x + 13.5, vf.y + 13.5, vf.w - 27, vf.h - 27);
 
   // -- Warm light pools spilling from the case clusters.
   for (const p of decor.lightPools) {
@@ -734,25 +700,39 @@ function buildStatic(game) {
   }
   }
 
-  // -- The vault platform: a shadow the raised chamber throws onto
-  // the hall floor to its south and west.
-  const psh = ctx.createLinearGradient(0, 396, 0, 440);
-  psh.addColorStop(0, 'rgba(0,0,0,0.44)');
-  psh.addColorStop(1, 'rgba(0,0,0,0)');
+  // -- The vault platform: the soft shadow the raised chamber
+  // throws onto the hall floor around its exposed sides — a wide
+  // feathered falloff to the south, gentler ones west and east —
+  // so the platform sits IN the hall's light instead of floating
+  // on top of the marble as a pasted panel.
+  const psh = ctx.createLinearGradient(0, 398, 0, 458);
+  psh.addColorStop(0, 'rgba(8,4,6,0.42)');
+  psh.addColorStop(0.45, 'rgba(8,4,6,0.20)');
+  psh.addColorStop(1, 'rgba(8,4,6,0)');
   ctx.fillStyle = psh;
-  ctx.fillRect(716, 396, 504, 44);
-  const pshW = ctx.createLinearGradient(694, 0, 742, 0);
-  pshW.addColorStop(0, 'rgba(0,0,0,0)');
-  pshW.addColorStop(1, 'rgba(0,0,0,0.36)');
+  ctx.fillRect(712, 398, 512, 60);
+  const pshW = ctx.createLinearGradient(690, 0, 742, 0);
+  pshW.addColorStop(0, 'rgba(8,4,6,0)');
+  pshW.addColorStop(0.6, 'rgba(8,4,6,0.16)');
+  pshW.addColorStop(1, 'rgba(8,4,6,0.32)');
   ctx.fillStyle = pshW;
-  ctx.fillRect(694, 132, 48, 264);
+  ctx.fillRect(690, 130, 52, 268);
+  const pshE = ctx.createLinearGradient(1212, 0, 1254, 0);
+  pshE.addColorStop(0, 'rgba(8,4,6,0.28)');
+  pshE.addColorStop(0.5, 'rgba(8,4,6,0.12)');
+  pshE.addColorStop(1, 'rgba(8,4,6,0)');
+  ctx.fillStyle = pshE;
+  ctx.fillRect(1212, 130, 42, 268);
 
   // -- Vault walls: heavy bands with gold trim.
   ctx.fillStyle = '#2e2342';
   for (const r of game.level.solids) {
     if (r.kind === 'vault') ctx.fillRect(r.x, r.y, r.w, r.h);
   }
-  ctx.strokeStyle = 'rgba(217,164,65,0.5)';
+  // A faint gold trim inside the wall line — kept dim on purpose:
+  // at full strength this rectangle was the chamber's hardest
+  // edge and a big part of why it read as a pasted UI panel.
+  ctx.strokeStyle = 'rgba(217,164,65,0.22)';
   ctx.lineWidth = 1.4;
   ctx.strokeRect(733, 131, 470, 266);
 
@@ -1626,9 +1606,16 @@ function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot, mul = 1) {
   ctx.clip();
   const a = (v) => Math.min(0.9, v * mul);
   const g = ctx.createRadialGradient(ox, oy, 3, ox, oy, range);
-  g.addColorStop(0, `rgba(${rgb},${a(hot ? 0.60 : 0.52)})`);
-  g.addColorStop(0.45, `rgba(${rgb},${a(hot ? 0.40 : 0.34)})`);
-  g.addColorStop(0.8, `rgba(${rgb},${a(hot ? 0.20 : 0.17)})`);
+  // v5.1: the stops sit above v4.1's (calm 0.52/0.34/0.17, hot
+  // 0.60/0.40/0.20). On the illustrated hall's BRIGHT marble a
+  // calm cone at the old strength washed out — worst in the
+  // patrol shot, where the fan's run across the lane is short —
+  // so calm is raised until it reads on the marble, and hot is
+  // raised with it to keep alert clearly stronger than calm.
+  // The radial falloff keeps the edges soft.
+  g.addColorStop(0, `rgba(${rgb},${a(hot ? 0.72 : 0.66)})`);
+  g.addColorStop(0.45, `rgba(${rgb},${a(hot ? 0.50 : 0.45)})`);
+  g.addColorStop(0.8, `rgba(${rgb},${a(hot ? 0.27 : 0.24)})`);
   g.addColorStop(1, `rgba(${rgb},0)`);
   ctx.fillStyle = g;
   ctx.fillRect(ox - range, oy - range, range * 2, range * 2);
@@ -1641,10 +1628,10 @@ function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot, mul = 1) {
     ctx.moveTo(poly[1].x, poly[1].y);
     for (let i = 2; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, (hot ? 0.30 : 0.26) * mul)})`;
+    ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, (hot ? 0.38 : 0.36) * mul)})`;
     ctx.lineWidth = 3.5;
     ctx.stroke();
-    ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, (hot ? 0.55 : 0.48) * mul)})`;
+    ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, (hot ? 0.64 : 0.60) * mul)})`;
     ctx.lineWidth = 1.4;
     ctx.stroke();
   }
@@ -1653,7 +1640,7 @@ function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot, mul = 1) {
   ctx.moveTo(poly[0].x, poly[0].y);
   for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
   ctx.closePath();
-  ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, (hot ? 0.32 : 0.24) * mul)})`;
+  ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, (hot ? 0.38 : 0.30) * mul)})`;
   ctx.lineWidth = 1;
   ctx.stroke();
 }
@@ -1773,37 +1760,7 @@ function facingDir(facing) {
   return c > 0 ? 'right' : 'left';
 }
 
-// The alert marks, drawn above a sprite guard's head (the code
-// figure draws its own inside guardBody).
-function drawGuardMark(ctx, g, x, y) {
-  ctx.textAlign = 'center';
-  if (g.sees > 0 || g.state === 'converge') {
-    ctx.font = '900 17px system-ui, sans-serif';
-    ctx.lineWidth = 3.4;
-    ctx.strokeStyle = 'rgba(20,4,4,0.85)';
-    ctx.strokeText('!', x, y);
-    ctx.fillStyle = '#ff5147';
-    ctx.fillText('!', x, y);
-  } else if (g.state === 'investigate') {
-    ctx.font = '900 15px system-ui, sans-serif';
-    ctx.lineWidth = 3.2;
-    ctx.strokeStyle = 'rgba(20,14,2,0.85)';
-    ctx.strokeText('?', x, y);
-    ctx.fillStyle = '#fbbf24';
-    ctx.fillText('?', x, y);
-  }
-}
-
 function drawGuardFigure(ctx, g, time) {
-  // v5: the illustrated sprite, rotated to facing, with a soft
-  // contact shadow so the figure stands IN the hall. Until the
-  // sprite is keyed (or if it failed), the v4.1 code figure draws.
-  if (ASSETS.guard) {
-    softShadow(ctx, g.x, g.y + 13, 22, 8, 0.48);
-    drawSprite(ctx, ASSETS.guard, g.x, g.y, g.facing, 80);
-    drawGuardMark(ctx, g, g.x, g.y - 48);
-    return;
-  }
   const feetY = g.y + 15;
   figureScale(ctx, g.x, feetY, 1.18, () => guardBody(ctx, g, time, feetY));
 }
@@ -1949,27 +1906,6 @@ function guardBody(ctx, g, time, feetY) {
 
 function drawThiefFigure(ctx, game) {
   const t = game.thief;
-  // v5: the illustrated sprite (hood, sack and all), rotated to
-  // facing over a soft contact shadow; the v4.1 code figure is
-  // the fallback until the sprite is keyed.
-  if (ASSETS.thief) {
-    softShadow(ctx, t.x, t.y + 13, 21, 7.5, 0.5);
-    drawSprite(ctx, ASSETS.thief, t.x, t.y, t.facing, 76);
-    if (game.nearLoot) {
-      ctx.fillStyle = 'rgba(10,8,16,0.88)';
-      rr(ctx, t.x - 10, t.y - 62, 20, 15, 4);
-      ctx.fill();
-      ctx.strokeStyle = GOLD;
-      ctx.lineWidth = 1;
-      rr(ctx, t.x - 10, t.y - 62, 20, 15, 4);
-      ctx.stroke();
-      ctx.fillStyle = GOLD;
-      ctx.font = '700 10.5px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('E', t.x, t.y - 50.5);
-    }
-    return;
-  }
   const feetY = t.y + 15;
   figureScale(ctx, t.x, feetY, 1.2, () => thiefBody(ctx, game, feetY));
 }

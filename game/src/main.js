@@ -159,17 +159,15 @@ function stageShot(name) {
     game.time = 83;
     game.alarm = 12;
     game.peakAlarm = 21;
-    // The thief pressed against the egg case's east face while
-    // the hall guard, in the open west of the case, sweeps his
-    // cone into its glass — the case itself is her cover.
-    place(game.thief, 548, 352, Math.PI);
-    // v5 staging: in v4.1 the guard stood in the 46px lane north
-    // of the case and his fan read on the dark slate. On v5's
-    // bright illustrated marble that short fan all but vanishes,
-    // so he now stands west of the case and the fan runs the
-    // length of its dark glass before the case cuts it off —
-    // the same hide-behind-the-case moment, readable again.
-    place(gA, 262, 348, 0);
+    // The thief pressed against the egg case's south face while
+    // the hall guard, in the lane just north of the case, sweeps
+    // his cone into its glass — the case itself is her cover.
+    place(game.thief, 415, 428, -Math.PI / 2);
+    // gA stands 10px further north than v4 staged him: with his
+    // feet almost on the egg case, the cone's whole run was sprite
+    // and glass and the fan never showed on the floor. From here
+    // the fan opens across the lane before it hits the case.
+    place(gA, 415, 252, Math.PI / 2);
     place(gB, 1040, 470, Math.PI / 2);
     place(gC, 960, 352, -0.5);
     camA.facing = 1.8;
