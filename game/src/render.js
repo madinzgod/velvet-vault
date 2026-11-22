@@ -119,6 +119,118 @@ function drawDiamondGem(ctx, x, y, s, cTop, cMid, cDeep) {
   ctx.restore();
 }
 
+// --- v5 illustrated assets ---------------------------------------------
+// v5 changes the art MEDIUM. The hall's floor, walls, paintings,
+// plants, benches and carpet are no longer drawn shape by shape:
+// they come from one generated painterly illustration
+// (assets/hall.jpg), and the actors are generated character
+// sprites (assets/guard.png, assets/thief.png) photographed on
+// solid magenta and chroma-keyed to transparency once at load.
+// Everything gameplay-shaped — cases, artifacts, the vault, the
+// cones, the HUD — is still drawn in code exactly as in v4.1, and
+// if any asset fails to load the v4.1 procedural rendering below
+// takes over untouched, so the game can never break on a missing
+// file. Asset URLs are relative to game/index.html, so they keep
+// working when main.ts copies game/ into the output directory.
+
+const ASSETS = { epoch: 0, settled: 0, hall: null, guard: null, thief: null };
+
+function illustrated() {
+  return !!(ASSETS.hall && ASSETS.hall.naturalWidth > 0);
+}
+
+// Key one magenta-backed sprite: pixels near pure magenta become
+// transparent with a feathered edge, edge pixels are un-mixed from
+// the magenta they were blended with (so no pink fringe survives),
+// and the result is cropped to the figure's bounding box.
+function keySprite(img) {
+  const MAX = 360;
+  const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.max(1, Math.round(img.naturalWidth * scale));
+  const h = Math.max(1, Math.round(img.naturalHeight * scale));
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(img, 0, 0, w, h);
+  let data;
+  try {
+    data = x.getImageData(0, 0, w, h);
+  } catch {
+    return null; // tainted or unreadable: fall back to code figures
+  }
+  const px = data.data;
+  let minX = w;
+  let minY = h;
+  let maxX = -1;
+  let maxY = -1;
+  for (let i = 0; i < px.length; i += 4) {
+    const r = px[i];
+    const g = px[i + 1];
+    const b = px[i + 2];
+    const d = Math.hypot(r - 255, g, b - 255);
+    let a = 255;
+    if (d <= 70) a = 0;
+    else if (d < 190) a = Math.round(((d - 70) / 120) * 255);
+    if (a > 0 && a < 255) {
+      const af = a / 255;
+      const ia = 1 - af;
+      px[i] = Math.max(0, Math.min(255, (r - ia * 255) / af));
+      px[i + 1] = Math.max(0, Math.min(255, g / af));
+      px[i + 2] = Math.max(0, Math.min(255, (b - ia * 255) / af));
+    }
+    px[i + 3] = a;
+    if (a > 12) {
+      const X = (i / 4) % w;
+      const Y = Math.floor(i / 4 / w);
+      if (X < minX) minX = X;
+      if (X > maxX) maxX = X;
+      if (Y < minY) minY = Y;
+      if (Y > maxY) maxY = Y;
+    }
+  }
+  if (maxX < 0) return null;
+  x.putImageData(data, 0, 0);
+  const cw = maxX - minX + 1;
+  const ch = maxY - minY + 1;
+  const out = document.createElement('canvas');
+  out.width = cw;
+  out.height = ch;
+  out.getContext('2d').drawImage(c, minX, minY, cw, ch, 0, 0, cw, ch);
+  return { canvas: out, w: cw, h: ch };
+}
+
+function assetSettled() {
+  ASSETS.settled++;
+  ASSETS.epoch++;
+  if (ASSETS.settled >= 3) window.__velvetAssetsSettled = true;
+}
+
+function loadAsset(src, key) {
+  const img = new Image();
+  img.onload = () => {
+    ASSETS[key] = key === 'hall' ? img : keySprite(img);
+    assetSettled();
+  };
+  img.onerror = () => assetSettled();
+  img.src = src;
+}
+loadAsset('assets/hall.jpg', 'hall');
+loadAsset('assets/guard.png', 'guard');
+loadAsset('assets/thief.png', 'thief');
+
+// Draw a keyed sprite centred on (x, y), rotated so the figure's
+// head — up in the source image — points along `facing`.
+function drawSprite(ctx, spr, x, y, facing, size) {
+  const s = size / spr.h;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(facing + Math.PI / 2);
+  ctx.scale(s, s);
+  ctx.drawImage(spr.canvas, -spr.w / 2, -spr.h / 2);
+  ctx.restore();
+}
+
 // --- The static hall ------------------------------------------------
 
 // Large marble slabs with veins that wander across the grout lines,
@@ -332,9 +444,21 @@ function buildStatic(game) {
   c.height = VIEW_H;
   const ctx = c.getContext('2d');
 
+  // -- v5: the illustrated hall goes down first. It already holds
+  // the marble floor, the north wall and its paintings, the side
+  // columns and plants, the benches and the central carpet, so in
+  // illustrated mode the procedural versions of those (below) are
+  // skipped; the vault, the light pools and the case reflections
+  // are still painted over it, and the cases themselves are drawn
+  // later, in the depth-sorted scene.
+  const ill = illustrated();
+  if (ill) ctx.drawImage(ASSETS.hall, 0, HUD_H, VIEW_W, VIEW_H - HUD_H);
+
   // -- Floor: big marble slabs, mottled and veined.
-  paintSlabs(ctx, 24, 104, 1256, 776, 213, 168,
-    ['#3a3f52', '#343949', '#3f4459', '#313644', '#383d4e'], '#22242e');
+  if (!ill) {
+    paintSlabs(ctx, 24, 104, 1256, 776, 213, 168,
+      ['#3a3f52', '#343949', '#3f4459', '#313644', '#383d4e'], '#22242e');
+  }
   // -- The vault's own floor: warmer stone.
   paintSlabs(ctx, vaultFloor.x, vaultFloor.y, vaultFloor.x + vaultFloor.w,
     vaultFloor.y + vaultFloor.h, 113, 124,
@@ -354,7 +478,9 @@ function buildStatic(game) {
   }
 
   // -- Brass floor inlay: a double border line with corner diamonds,
-  // set into the marble around the hall.
+  // set into the marble around the hall. (Procedural mode only —
+  // the illustration carries its own floor dressing.)
+  if (!ill) {
   const fi = decor.floorInlay;
   ctx.strokeStyle = 'rgba(217,164,65,0.34)';
   ctx.lineWidth = 2;
@@ -373,9 +499,12 @@ function buildStatic(game) {
     ctx.fillRect(-4, -4, 8, 8);
     ctx.restore();
   }
+  }
 
   // -- Area rugs under the side case clusters: deep indigo wool,
   // crimson-and-gold border, a faint diamond lattice in the field.
+  // (Procedural mode only, as above.)
+  if (!ill) {
   for (const r of decor.rugs) {
     const rg = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
     rg.addColorStop(0, '#24344f');
@@ -409,6 +538,7 @@ function buildStatic(game) {
     rsh.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = rsh;
     ctx.fillRect(r.x, r.y + r.h, r.w, 10);
+  }
   }
 
   // -- The vault's inner carpet: crimson, gold border bands, a
@@ -474,6 +604,9 @@ function buildStatic(game) {
   ctx.fillRect(ped.x - 50, ped.y, ped.w + 100, ped.h + 100);
 
   // -- The carpet runner: crimson, double gold border, diamond row.
+  // (Procedural mode only — the illustration has its own runner
+  // and rope barriers down the centre.)
+  if (!ill) {
   const cg = ctx.createLinearGradient(carpet.x, 0, carpet.x + carpet.w, 0);
   cg.addColorStop(0, '#5f1620');
   cg.addColorStop(0.5, '#82222f');
@@ -522,9 +655,13 @@ function buildStatic(game) {
       ctx.fill();
     }
   }
+  }
 
   // -- Side and south walls: dark bands with a gold trim line and a
-  // soft shadow where wall meets floor.
+  // soft shadow where wall meets floor. (This whole wall treatment,
+  // and the north wall face below it, is procedural mode only —
+  // the illustration brings its own walls and paintings.)
+  if (!ill) {
   ctx.fillStyle = '#1d1930';
   ctx.fillRect(0, 776, VIEW_W, 24);
   ctx.fillRect(0, HUD_H, 24, 736);
@@ -594,6 +731,7 @@ function buildStatic(game) {
     ctx.beginPath();
     ctx.arc(sx, 91, 2.4, 0, Math.PI * 2);
     ctx.fill();
+  }
   }
 
   // -- The vault platform: a shadow the raised chamber throws onto
@@ -1635,7 +1773,37 @@ function facingDir(facing) {
   return c > 0 ? 'right' : 'left';
 }
 
+// The alert marks, drawn above a sprite guard's head (the code
+// figure draws its own inside guardBody).
+function drawGuardMark(ctx, g, x, y) {
+  ctx.textAlign = 'center';
+  if (g.sees > 0 || g.state === 'converge') {
+    ctx.font = '900 17px system-ui, sans-serif';
+    ctx.lineWidth = 3.4;
+    ctx.strokeStyle = 'rgba(20,4,4,0.85)';
+    ctx.strokeText('!', x, y);
+    ctx.fillStyle = '#ff5147';
+    ctx.fillText('!', x, y);
+  } else if (g.state === 'investigate') {
+    ctx.font = '900 15px system-ui, sans-serif';
+    ctx.lineWidth = 3.2;
+    ctx.strokeStyle = 'rgba(20,14,2,0.85)';
+    ctx.strokeText('?', x, y);
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillText('?', x, y);
+  }
+}
+
 function drawGuardFigure(ctx, g, time) {
+  // v5: the illustrated sprite, rotated to facing, with a soft
+  // contact shadow so the figure stands IN the hall. Until the
+  // sprite is keyed (or if it failed), the v4.1 code figure draws.
+  if (ASSETS.guard) {
+    softShadow(ctx, g.x, g.y + 13, 22, 8, 0.48);
+    drawSprite(ctx, ASSETS.guard, g.x, g.y, g.facing, 80);
+    drawGuardMark(ctx, g, g.x, g.y - 48);
+    return;
+  }
   const feetY = g.y + 15;
   figureScale(ctx, g.x, feetY, 1.18, () => guardBody(ctx, g, time, feetY));
 }
@@ -1781,6 +1949,27 @@ function guardBody(ctx, g, time, feetY) {
 
 function drawThiefFigure(ctx, game) {
   const t = game.thief;
+  // v5: the illustrated sprite (hood, sack and all), rotated to
+  // facing over a soft contact shadow; the v4.1 code figure is
+  // the fallback until the sprite is keyed.
+  if (ASSETS.thief) {
+    softShadow(ctx, t.x, t.y + 13, 21, 7.5, 0.5);
+    drawSprite(ctx, ASSETS.thief, t.x, t.y, t.facing, 76);
+    if (game.nearLoot) {
+      ctx.fillStyle = 'rgba(10,8,16,0.88)';
+      rr(ctx, t.x - 10, t.y - 62, 20, 15, 4);
+      ctx.fill();
+      ctx.strokeStyle = GOLD;
+      ctx.lineWidth = 1;
+      rr(ctx, t.x - 10, t.y - 62, 20, 15, 4);
+      ctx.stroke();
+      ctx.fillStyle = GOLD;
+      ctx.font = '700 10.5px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('E', t.x, t.y - 50.5);
+    }
+    return;
+  }
   const feetY = t.y + 15;
   figureScale(ctx, t.x, feetY, 1.2, () => thiefBody(ctx, game, feetY));
 }
@@ -1933,11 +2122,16 @@ function drawScene(ctx, game) {
   }
   const p = game.level.pedestal;
   items.push({ y: p.y + p.h, draw: () => drawPedestal(ctx, game) });
-  for (const pl of game.level.decor.plants) {
-    items.push({ y: pl.y, draw: () => drawPlant(ctx, pl) });
-  }
-  for (const b of game.level.decor.benches) {
-    items.push({ y: b.y + b.h, draw: () => drawBench(ctx, b) });
+  // Plants and benches are pure dressing: in illustrated mode the
+  // painting already furnishes the hall with its own, so the code
+  // ones would only double them up.
+  if (!illustrated()) {
+    for (const pl of game.level.decor.plants) {
+      items.push({ y: pl.y, draw: () => drawPlant(ctx, pl) });
+    }
+    for (const b of game.level.decor.benches) {
+      items.push({ y: b.y + b.h, draw: () => drawBench(ctx, b) });
+    }
   }
   for (const g of game.guards) {
     items.push({ y: g.y + 15, draw: () => drawGuardFigure(ctx, g, game.time) });
@@ -2203,7 +2397,14 @@ function drawPanels(ctx, game) {
 // --- Frame -------------------------------------------------------------------
 
 export function drawGame(ctx, game) {
-  if (!game._static) game._static = buildStatic(game);
+  // The static hall is cached, but rebuilt whenever an illustrated
+  // asset settles: the first frames may still be the procedural
+  // fallback, and the moment hall.jpg lands the painted hall
+  // replaces it.
+  if (!game._static || game._staticEpoch !== ASSETS.epoch) {
+    game._static = buildStatic(game);
+    game._staticEpoch = ASSETS.epoch;
+  }
   ctx.drawImage(game._static, 0, 0);
   drawExit(ctx, game);
   drawWatchers(ctx, game);
