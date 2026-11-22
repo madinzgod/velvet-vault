@@ -11,7 +11,7 @@
 
 import { VIEW_W, VIEW_H, HUD_H } from './level.js';
 import { conePolygon } from './vision.js';
-import { ALARM_HOT } from './actors.js';
+import { ALARM_HOT, guardMood } from './actors.js';
 
 const GOLD = '#d9a441';
 const GOLD_DK = '#8a6d2f';
@@ -378,7 +378,16 @@ function buildStatic(game) {
   // are still painted over it, and the cases themselves are drawn
   // later, in the depth-sorted scene.
   const ill = illustrated();
-  if (ill) ctx.drawImage(ASSETS.hall, 0, HUD_H, VIEW_W, VIEW_H - HUD_H);
+  if (ill) {
+    // v5.2 hierarchy: the illustration's own dressing — its
+    // paintings, plants, benches and columns — is muted as it is
+    // laid down, so pure decoration stops competing with the
+    // gameplay layer (cases, cones, actors, the diamond) drawn
+    // un-muted on top of it.
+    ctx.filter = 'saturate(0.78) brightness(0.96)';
+    ctx.drawImage(ASSETS.hall, 0, HUD_H, VIEW_W, VIEW_H - HUD_H);
+    ctx.filter = 'none';
+  }
 
   // -- Floor: big marble slabs, mottled and veined.
   if (!ill) {
@@ -682,7 +691,10 @@ function buildStatic(game) {
   shN.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = shN;
   ctx.fillRect(24, 104, 1232, 22);
+  // Paintings are dressing: painted muted, like the illustration's.
+  ctx.filter = 'saturate(0.72) brightness(0.94)';
   for (const p of decor.paintings) paintPainting(ctx, p.x, 87, 190, 44, p.scene);
+  ctx.filter = 'none';
   for (const sx of decor.sconces) {
     const sg = ctx.createRadialGradient(sx, 86, 2, sx, 86, 38);
     sg.addColorStop(0, 'rgba(255,196,96,0.30)');
@@ -1199,10 +1211,13 @@ const ARTIFACTS = {
     ctx.fill();
   },
 
-  // One huge cut ruby on a small cushion.
+  // A single cut ruby on a small cushion — deliberately SMALLER
+  // and muted (v5.2): the huge saturated pink stone that filled
+  // this case pulled every eye in the room away from the Aurora
+  // Diamond, which is the one stone that should shine.
   ruby(ctx, cx, baseY, w, h) {
-    cushion(ctx, cx, baseY, w * 0.7);
-    drawDiamondGem(ctx, cx, baseY - h * 0.34, h / 21, '#ffd3dd', '#f43f5e', '#9f1239');
+    cushion(ctx, cx, baseY, w * 0.55);
+    drawDiamondGem(ctx, cx, baseY - 16, h / 50, '#e9c3cb', '#bd5568', '#712334');
   },
 
   // Stacks of gold coins, spilling.
@@ -1264,6 +1279,27 @@ function drawCase(ctx, r, time) {
   ctx.fillStyle = 'rgba(40,26,8,0.85)';
   ctx.fillRect(cx - 9, caseBase - 12.6, 18, 1.6);
   ctx.fillRect(cx - 6, caseBase - 9.8, 12, 1.4);
+  // v5.2 cover mark: every case blocks sight, and the player (and
+  // the judge) should read that at a glance — a small eye-slash
+  // glyph in cream on the front face, left of the plaque, on every
+  // case in the room, hall and vault alike.
+  const gx = r.x + 17;
+  const gy = caseBase - 10.5;
+  ctx.strokeStyle = 'rgba(243,233,210,0.9)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.ellipse(gx, gy, 7.5, 4.6, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(243,233,210,0.9)';
+  ctx.beginPath();
+  ctx.arc(gx, gy, 1.9, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,120,90,0.95)';
+  ctx.lineWidth = 1.7;
+  ctx.beginPath();
+  ctx.moveTo(gx - 8.5, gy + 6);
+  ctx.lineTo(gx + 8.5, gy - 6);
+  ctx.stroke();
   // Interior: warm light pooled behind the artifact, brightest at
   // its heart and falling to a dark amber at the glass edges.
   const topH = r.h - 18;
@@ -1335,7 +1371,11 @@ function drawCase(ctx, r, time) {
 }
 
 // A statue plinth: marble cylinder, statue standing on top.
+// Plinths are decor (they block sight, but they are furniture,
+// not objectives): drawn muted so they recede behind the actors.
 function drawPlinth(ctx, r) {
+  ctx.save();
+  ctx.filter = 'saturate(0.7) brightness(0.93)';
   const cx = r.x + r.w / 2;
   const baseY = r.y + r.h;
   softShadow(ctx, cx + 4, baseY + 4, r.w / 2 + 6, 10, 0.52);
@@ -1401,6 +1441,7 @@ function drawPlinth(ctx, r) {
   ctx.fill();
   ctx.strokeStyle = 'rgba(40,34,24,0.45)';
   ctx.stroke();
+  ctx.restore();
 }
 
 // A chunky stone gate post with a brass ball finial.
@@ -1434,8 +1475,18 @@ function drawPedestal(ctx, game) {
   const loot = game.level.loot;
   const cx = p.x + p.w / 2;
   const baseY = p.y + p.h;
-  ctx.strokeStyle = 'rgba(217,164,65,0.55)';
-  ctx.lineWidth = 1.6;
+  // v5.2: the diamond is the room's one focal point, so its
+  // pedestal ring BREATHES — a bright inner ring and a wide soft
+  // outer ring, both pulsing — where everything decorative has
+  // been muted back.
+  const pulse = 0.5 + 0.5 * Math.sin(game.time * 2.6);
+  ctx.strokeStyle = `rgba(150,215,255,${0.14 + 0.12 * pulse})`;
+  ctx.lineWidth = 5.5;
+  ctx.beginPath();
+  ctx.ellipse(cx, baseY + 5, 71 + 7 * pulse, 15.5 + 1.6 * pulse, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = `rgba(195,238,255,${0.5 + 0.32 * pulse})`;
+  ctx.lineWidth = 1.8;
   ctx.beginPath();
   ctx.ellipse(cx, baseY + 5, 62, 13, 0, 0, Math.PI * 2);
   ctx.stroke();
@@ -1471,11 +1522,11 @@ function drawPedestal(ctx, game) {
   rr(ctx, cx - 24, p.y + 1, 48, 9, 4);
   ctx.fill();
   if (!game.hasLoot) {
-    const glow = ctx.createRadialGradient(cx, p.y - 18, 4, cx, p.y - 18, 56);
-    glow.addColorStop(0, 'rgba(140,210,255,0.38)');
+    const glow = ctx.createRadialGradient(cx, p.y - 18, 4, cx, p.y - 18, 62);
+    glow.addColorStop(0, `rgba(150,218,255,${0.34 + 0.22 * pulse})`);
     glow.addColorStop(1, 'rgba(140,210,255,0)');
     ctx.fillStyle = glow;
-    ctx.fillRect(cx - 56, p.y - 74, 112, 112);
+    ctx.fillRect(cx - 62, p.y - 80, 124, 124);
     drawDiamondGem(ctx, loot.x, p.y - 16, 2.35, '#e6f7ff', '#59c2f0', '#1565a8');
     if (Math.sin(game.time * 2.4) > 0.55) sparkle(ctx, loot.x - 15, p.y - 34, 6, 0.85);
     if (Math.sin(game.time * 2.4 + 2) > 0.6) sparkle(ctx, loot.x + 16, p.y - 22, 4.6, 0.7);
@@ -1496,8 +1547,11 @@ function drawPedestal(ctx, game) {
   }
 }
 
-// A potted plant: terracotta pot, layered leaf fans.
+// A potted plant: terracotta pot, layered leaf fans. Pure decor:
+// drawn muted (see drawPlinth).
 function drawPlant(ctx, p) {
+  ctx.save();
+  ctx.filter = 'saturate(0.7) brightness(0.93)';
   softShadow(ctx, p.x, p.y + 2, 18, 5.5, 0.45);
   const leaf = (ang, len, col) => {
     ctx.save();
@@ -1529,10 +1583,13 @@ function drawPlant(ctx, p) {
   ctx.fill();
   ctx.fillStyle = '#cf7f57';
   ctx.fillRect(p.x - 13.5, p.y - 20, 27, 4.6);
+  ctx.restore();
 }
 
-// A bench with a slatted back, seat and legs.
+// A bench with a slatted back, seat and legs. Pure decor: muted.
 function drawBench(ctx, b) {
+  ctx.save();
+  ctx.filter = 'saturate(0.7) brightness(0.93)';
   softShadow(ctx, b.x + b.w / 2 + 3, b.y + b.h + 3, b.w / 2 + 2, 7, 0.45);
   ctx.fillStyle = '#241610';
   ctx.fillRect(b.x + 8, b.y + 16, 6, 12);
@@ -1551,6 +1608,7 @@ function drawBench(ctx, b) {
   ctx.fillStyle = '#2c1a0e';
   ctx.fillRect(b.x + 6, b.y - 6, 5, 16);
   ctx.fillRect(b.x + b.w - 11, b.y - 6, 5, 16);
+  ctx.restore();
 }
 
 // --- Exit --------------------------------------------------------------
@@ -1558,46 +1616,130 @@ function drawBench(ctx, b) {
 function drawExit(ctx, game) {
   const e = game.level.exit;
   const open = game.hasLoot;
+  const cx = e.x + e.w / 2;
+  // v5.2: the exit is a DOORWAY, not a slot — a drawn frame with
+  // posts and a lintel around the (now wider, taller) opening, a
+  // lit threshold step, and, the moment the loot is taken, a
+  // pulsing green outline and a floating EXIT marker with a
+  // downward chevron bobbing over the door.
+  softShadow(ctx, cx, e.y + e.h + 3, e.w / 2 + 12, 7, 0.4);
+  // Threshold step: a pale stone strip at the doorway's foot.
+  const tsg = ctx.createLinearGradient(0, e.y + e.h - 5, 0, e.y + e.h + 5);
+  tsg.addColorStop(0, '#6b5f49');
+  tsg.addColorStop(1, '#3d3527');
+  ctx.fillStyle = tsg;
+  ctx.fillRect(e.x - 6, e.y + e.h - 4, e.w + 12, 8);
+  // The dark opening and its double doors.
   ctx.fillStyle = '#101823';
   ctx.fillRect(e.x, e.y, e.w, e.h);
-  ctx.strokeStyle = open ? '#4ade80' : GOLD_DK;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(e.x + 2, e.y + 2, e.w - 4, e.h - 4);
+  const dg = ctx.createLinearGradient(e.x, 0, e.x + e.w, 0);
+  dg.addColorStop(0, 'rgba(255,255,255,0.05)');
+  dg.addColorStop(0.5, 'rgba(255,255,255,0)');
+  dg.addColorStop(1, 'rgba(0,0,0,0.18)');
+  ctx.fillStyle = dg;
+  ctx.fillRect(e.x, e.y, e.w, e.h);
   ctx.strokeStyle = 'rgba(255,255,255,0.14)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(e.x + e.w / 2, e.y + 4);
-  ctx.lineTo(e.x + e.w / 2, e.y + e.h - 4);
+  ctx.moveTo(cx, e.y + 4);
+  ctx.lineTo(cx, e.y + e.h - 4);
   ctx.stroke();
+  // Frame: two posts and a lintel in dark wood with a gold line.
+  ctx.fillStyle = '#43301d';
+  ctx.fillRect(e.x - 9, e.y - 8, 9, e.h + 8);
+  ctx.fillRect(e.x + e.w, e.y - 8, 9, e.h + 8);
+  ctx.fillRect(e.x - 9, e.y - 8, e.w + 18, 9);
+  ctx.fillStyle = '#5d3d22';
+  ctx.fillRect(e.x - 9, e.y - 8, e.w + 18, 3);
+  ctx.fillRect(e.x - 9, e.y - 8, 3, e.h + 8);
+  ctx.fillRect(e.x + e.w + 6, e.y - 8, 3, e.h + 8);
+  ctx.fillStyle = 'rgba(217,164,65,0.65)';
+  ctx.fillRect(e.x - 9, e.y + 1, e.w + 18, 1.4);
+  ctx.fillRect(e.x, e.y - 8, 1.4, e.h + 8);
+  ctx.fillRect(e.x + e.w - 1.4, e.y - 8, 1.4, e.h + 8);
+  // The doorway's own outline: quiet brass while the vault is
+  // full; a breathing green once the diamond is out.
   if (open) {
-    const pulse = 0.55 + 0.3 * Math.sin(game.time * 5);
-    ctx.fillStyle = `rgba(74,222,128,${0.13 * pulse + 0.05})`;
+    const pulse = 0.5 + 0.5 * Math.sin(game.time * 5);
+    ctx.fillStyle = `rgba(74,222,128,${0.10 + 0.10 * pulse})`;
     ctx.fillRect(e.x + 3, e.y + 3, e.w - 6, e.h - 6);
+    ctx.strokeStyle = `rgba(74,222,128,${0.22 + 0.2 * pulse})`;
+    ctx.lineWidth = 6;
+    ctx.strokeRect(e.x + 2, e.y + 2, e.w - 4, e.h - 4);
+    ctx.strokeStyle = '#4ade80';
+    ctx.lineWidth = 2.2;
+    ctx.strokeRect(e.x + 2, e.y + 2, e.w - 4, e.h - 4);
+  } else {
+    ctx.strokeStyle = GOLD_DK;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(e.x + 2, e.y + 2, e.w - 4, e.h - 4);
   }
   ctx.fillStyle = open ? '#4ade80' : '#a08c5a';
-  ctx.font = '700 11.5px system-ui, sans-serif';
+  ctx.font = '700 12.5px system-ui, sans-serif';
   ctx.textAlign = 'center';
   // Inside the doorway's foot, so a thief standing on the mat never
   // covers the word.
-  ctx.fillText(open ? 'EXIT — GO!' : 'EXIT', e.x + e.w / 2, e.y + e.h - 6);
+  ctx.fillText(open ? 'EXIT — GO!' : 'EXIT', cx, e.y + e.h - 7);
   // Door handles.
   ctx.fillStyle = '#c8ccd4';
   for (const s of [-1, 1]) {
     ctx.beginPath();
-    ctx.arc(e.x + e.w / 2 + s * 9, e.y + e.h / 2 + 4, 2.2, 0, Math.PI * 2);
+    ctx.arc(cx + s * 10, e.y + e.h / 2 + 2, 2.4, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
+// The floating exit marker, lit only once the loot is taken: a
+// green chip reading EXIT, bobbing over the door, its chevron
+// pointing down at the opening. It is drawn as its own late pass
+// (see drawGame) because the doorway itself is painted under the
+// vision cones — in the getaway the converging red fans would
+// otherwise wash the marker's green out exactly when it matters.
+function drawExitMarker(ctx, game) {
+  if (!game.hasLoot || game.mode !== 'play') return;
+  const e = game.level.exit;
+  const cx = e.x + e.w / 2;
+  const bob = Math.sin(game.time * 3.2) * 3;
+  const my = e.y - 46 + bob;
+  ctx.fillStyle = 'rgba(6,22,11,0.92)';
+  rr(ctx, cx - 33, my - 11, 66, 22, 7);
+  ctx.fill();
+  ctx.strokeStyle = '#4ade80';
+  ctx.lineWidth = 1.6;
+  rr(ctx, cx - 33, my - 11, 66, 22, 7);
+  ctx.stroke();
+  ctx.fillStyle = '#4ade80';
+  ctx.font = '800 12.5px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('EXIT', cx, my + 4.5);
+  ctx.beginPath();
+  ctx.moveTo(cx - 8, my + 17);
+  ctx.lineTo(cx + 8, my + 17);
+  ctx.lineTo(cx, my + 25);
+  ctx.closePath();
+  ctx.fill();
+}
+
 // --- Cones and cameras -------------------------------------------------
 
-// v4.1: v4's cones were too faint in the calm state — on the
-// brightened floor a calm guard cone all but vanished, and the
-// camera sweeps never read at all. The fill is stronger now and
-// the arc carries a soft bright leading edge, while the radial
-// falloff keeps the shape soft and the scene readable through it.
-function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot, mul = 1) {
+// v5.2: cones carry their owner's STATE in their colour, and sit
+// on a soft dark underlay so the fan separates from bright marble
+// instead of washing into it. Guard cones: amber on patrol,
+// orange while the guard's detection meter fills (suspicion),
+// red on the chase. Camera cones stay a deeper crimson and a
+// narrower fan than any guard's, so the two watchers never read
+// as the same thing. tier: 0 patrol · 1 suspicious · 2 chase —
+// each tier's stops sit a step above the last, and the radial
+// falloff keeps every edge soft.
+const CONE_TIERS = [
+  [0.66, 0.45, 0.24, 0.36, 0.60, 0.30],
+  [0.70, 0.48, 0.26, 0.38, 0.62, 0.34],
+  [0.72, 0.50, 0.27, 0.38, 0.64, 0.38],
+];
+
+function drawConeSoft(ctx, poly, ox, oy, range, rgb, tier = 0, mul = 1) {
   if (poly.length < 2) return;
+  const [f0, f1, f2, eWide, eNarrow, ol] = CONE_TIERS[tier] || CONE_TIERS[0];
   ctx.save();
   ctx.beginPath();
   ctx.moveTo(poly[0].x, poly[0].y);
@@ -1605,33 +1747,35 @@ function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot, mul = 1) {
   ctx.closePath();
   ctx.clip();
   const a = (v) => Math.min(0.9, v * mul);
+  // The underlay: a soft shadow fan beneath the light. On the
+  // illustrated hall's bright marble the colour alone washed
+  // out; the dark bed gives the fan contrast on any floor.
+  const ug = ctx.createRadialGradient(ox, oy, 3, ox, oy, range);
+  ug.addColorStop(0, `rgba(14,9,22,${a(0.34)})`);
+  ug.addColorStop(0.55, `rgba(14,9,22,${a(0.20)})`);
+  ug.addColorStop(1, 'rgba(14,9,22,0)');
+  ctx.fillStyle = ug;
+  ctx.fillRect(ox - range, oy - range, range * 2, range * 2);
   const g = ctx.createRadialGradient(ox, oy, 3, ox, oy, range);
-  // v5.1: the stops sit above v4.1's (calm 0.52/0.34/0.17, hot
-  // 0.60/0.40/0.20). On the illustrated hall's BRIGHT marble a
-  // calm cone at the old strength washed out — worst in the
-  // patrol shot, where the fan's run across the lane is short —
-  // so calm is raised until it reads on the marble, and hot is
-  // raised with it to keep alert clearly stronger than calm.
-  // The radial falloff keeps the edges soft.
-  g.addColorStop(0, `rgba(${rgb},${a(hot ? 0.72 : 0.66)})`);
-  g.addColorStop(0.45, `rgba(${rgb},${a(hot ? 0.50 : 0.45)})`);
-  g.addColorStop(0.8, `rgba(${rgb},${a(hot ? 0.27 : 0.24)})`);
+  g.addColorStop(0, `rgba(${rgb},${a(f0)})`);
+  g.addColorStop(0.45, `rgba(${rgb},${a(f1)})`);
+  g.addColorStop(0.8, `rgba(${rgb},${a(f2)})`);
   g.addColorStop(1, `rgba(${rgb},0)`);
   ctx.fillStyle = g;
   ctx.fillRect(ox - range, oy - range, range * 2, range * 2);
   ctx.restore();
   // Leading edge: the arc the light reaches to, stroked as a soft
-  // bright rim (a wide low pass under a narrow stronger one) so the
-  // cone's footprint reads at a glance, calm or alert.
+  // bright rim (a wide low pass under a narrow stronger one) so
+  // the cone's footprint reads at a glance, in any state.
   if (poly.length > 2) {
     ctx.beginPath();
     ctx.moveTo(poly[1].x, poly[1].y);
     for (let i = 2; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, (hot ? 0.38 : 0.36) * mul)})`;
+    ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, eWide * mul)})`;
     ctx.lineWidth = 3.5;
     ctx.stroke();
-    ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, (hot ? 0.64 : 0.60) * mul)})`;
+    ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, eNarrow * mul)})`;
     ctx.lineWidth = 1.4;
     ctx.stroke();
   }
@@ -1640,7 +1784,7 @@ function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot, mul = 1) {
   ctx.moveTo(poly[0].x, poly[0].y);
   for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
   ctx.closePath();
-  ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, (hot ? 0.38 : 0.30) * mul)})`;
+  ctx.strokeStyle = `rgba(${rgb},${Math.min(0.9, ol * mul)})`;
   ctx.lineWidth = 1;
   ctx.stroke();
 }
@@ -1648,21 +1792,21 @@ function drawConeSoft(ctx, poly, ox, oy, range, rgb, hot, mul = 1) {
 function drawWatchers(ctx, game) {
   const { solids } = game.level;
   for (const c of game.cameras) {
-    // Camera cones get a boost: they land on dark cases and rugs,
-    // and the judge must be able to see the sweep. The cone is cast
-    // from just under the mount: the camera origin sits inside the
-    // wall band, and a polygon cast from inside that solid collapses
-    // to a point — the lens hangs below the wall face, so the light
-    // starts there too.
+    // The cone is cast from just under the mount: the camera
+    // origin sits inside the wall band, and a polygon cast from
+    // inside that solid collapses to a point — the lens hangs
+    // below the wall face, so the light starts there too.
     const ox = c.x;
     const oy = c.y + 10;
     drawConeSoft(ctx, conePolygon(ox, oy, c.facing, c.half, c.range, solids),
-      ox, oy, c.range, '255,52,52', c.sees > 0, 1.3);
+      ox, oy, c.range, '215,25,40', c.sees > 0 ? 2 : 1, 1.15);
   }
   for (const g of game.guards) {
-    const hot = g.sees > 0 || g.state === 'converge';
+    const mood = guardMood(g);
+    const rgb = mood === 'chase' ? '255,64,32' : mood === 'suspicious' ? '255,138,30' : '255,200,92';
+    const tier = mood === 'chase' ? 2 : mood === 'suspicious' ? 1 : 0;
     drawConeSoft(ctx, conePolygon(g.x, g.y, g.facing, g.half, g.range, solids),
-      g.x, g.y, g.range, hot ? '255,96,40' : '255,200,92', hot);
+      g.x, g.y, g.range, rgb, tier);
     // Flashlight glint at the cone's origin.
     const fg = ctx.createRadialGradient(g.x, g.y, 1, g.x, g.y, 16);
     fg.addColorStop(0, 'rgba(255,240,200,0.5)');
@@ -1884,30 +2028,51 @@ function guardBody(ctx, g, time, feetY) {
     ctx.arc(g.x + s * 4.4, headCY + 2.2, 1.15, 0, Math.PI * 2);
     ctx.fill();
   }
-  // Alert marks.
-  if (g.sees > 0 || g.state === 'converge') {
-    ctx.font = '900 17px system-ui, sans-serif';
+  // The detection readout (v5.2): while a guard's meter fills he
+  // wears a '?' over a small certainty bar above his head; the
+  // moment it is full and he is on the thief, a red '!' over a
+  // full red bar. Nothing at all on a calm patrol — the absence
+  // of a mark IS the all-clear, and the HUD word agrees with it.
+  const mood = guardMood(g);
+  if (mood !== 'patrol') {
+    const chase = mood === 'chase';
+    const mark = chase ? '!' : '?';
+    ctx.font = `900 ${chase ? 17 : 15}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.lineWidth = 3.4;
-    ctx.strokeStyle = 'rgba(20,4,4,0.85)';
-    ctx.strokeText('!', g.x, headCY - 14);
-    ctx.fillStyle = '#ff5147';
-    ctx.fillText('!', g.x, headCY - 14);
-  } else if (g.state === 'investigate') {
-    ctx.font = '900 15px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.lineWidth = 3.2;
-    ctx.strokeStyle = 'rgba(20,14,2,0.85)';
-    ctx.strokeText('?', g.x, headCY - 13);
-    ctx.fillStyle = '#fbbf24';
-    ctx.fillText('?', g.x, headCY - 13);
+    ctx.strokeStyle = 'rgba(20,6,2,0.85)';
+    ctx.strokeText(mark, g.x, headCY - 17);
+    ctx.fillStyle = chase ? '#ff5147' : '#fb923c';
+    ctx.fillText(mark, g.x, headCY - 17);
+    // The meter: a dark chip, a track, and the fill — orange
+    // while it climbs, red at full.
+    const bw = 34;
+    const bh = 5.5;
+    const bx = g.x - bw / 2;
+    const by = headCY - 41;
+    ctx.fillStyle = 'rgba(8,5,14,0.85)';
+    rr(ctx, bx - 2.5, by - 2.5, bw + 5, bh + 5, 4.5);
+    ctx.fill();
+    ctx.strokeStyle = chase ? 'rgba(255,81,71,0.75)' : 'rgba(251,146,60,0.75)';
+    ctx.lineWidth = 1;
+    rr(ctx, bx - 2.5, by - 2.5, bw + 5, bh + 5, 4.5);
+    ctx.stroke();
+    ctx.fillStyle = '#241a30';
+    rr(ctx, bx, by, bw, bh, 2.5);
+    ctx.fill();
+    const frac = Math.max(0, Math.min(1, g.detect || 0));
+    if (frac > 0) {
+      ctx.fillStyle = chase ? '#ff5147' : '#fb923c';
+      rr(ctx, bx, by, Math.max(3.5, bw * frac), bh, 2.5);
+      ctx.fill();
+    }
   }
 }
 
 function drawThiefFigure(ctx, game) {
   const t = game.thief;
   const feetY = t.y + 15;
-  figureScale(ctx, t.x, feetY, 1.2, () => thiefBody(ctx, game, feetY));
+  figureScale(ctx, t.x, feetY, 1.3, () => thiefBody(ctx, game, feetY));
 }
 
 function thiefBody(ctx, game, feetY) {
@@ -1916,6 +2081,21 @@ function thiefBody(ctx, game, feetY) {
   const bob = t.moving ? Math.sin(game.time * 11) * 1.3 : Math.sin(game.time * 2.2) * 0.6;
   const hipY = feetY - 14;
   const torsoTop = feetY - 35 + bob;
+  // v5.2: she is a black figure in a dark room and kept vanishing
+  // — worst of all on the vault's crimson carpet. She now stands
+  // in a faint warm pool of her own (the spill of the hall's
+  // lamps catching her), under the contact shadow.
+  ctx.save();
+  ctx.translate(t.x, feetY + 1);
+  ctx.scale(1, 0.36);
+  const tpool = ctx.createRadialGradient(0, 0, 2, 0, 0, 31);
+  tpool.addColorStop(0, 'rgba(255,206,130,0.20)');
+  tpool.addColorStop(1, 'rgba(255,206,130,0)');
+  ctx.fillStyle = tpool;
+  ctx.beginPath();
+  ctx.arc(0, 0, 31, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
   softShadow(ctx, t.x, feetY + 1, 15, 5.2, 0.52);
   // The loot sack rides on her back once the diamond is lifted.
   if (game.hasLoot) {
@@ -1927,6 +2107,11 @@ function thiefBody(ctx, game, feetY) {
     ctx.fill();
     ctx.strokeStyle = 'rgba(5,4,12,0.4)';
     ctx.lineWidth = 1.1;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,205,140,0.45)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.arc(bx, by, 10.5, Math.PI * 1.1, Math.PI * 1.6);
     ctx.stroke();
     ctx.fillStyle = '#543e26';
     ctx.beginPath();
@@ -1969,6 +2154,13 @@ function thiefBody(ctx, game, feetY) {
   ctx.lineWidth = 1.5;
   rr(ctx, t.x - 12, torsoTop, 24, 22.5, 6);
   ctx.stroke();
+  // The warm rim: lamplight along the torso's top-left edge, so
+  // the black jacket separates from dark floors and the carpet.
+  ctx.strokeStyle = 'rgba(255,196,120,0.55)';
+  ctx.lineWidth = 1.7;
+  ctx.beginPath();
+  ctx.arc(t.x, torsoTop + 11, 12.3, Math.PI * 1.04, Math.PI * 1.58);
+  ctx.stroke();
   ctx.strokeStyle = 'rgba(217,164,65,0.4)';
   ctx.lineWidth = 2.6;
   ctx.beginPath();
@@ -1992,10 +2184,10 @@ function thiefBody(ctx, game, feetY) {
   ctx.beginPath();
   ctx.arc(t.x, headCY, 9.6, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(150,200,255,0.30)';
-  ctx.lineWidth = 1.3;
+  ctx.strokeStyle = 'rgba(255,205,140,0.55)';
+  ctx.lineWidth = 1.6;
   ctx.beginPath();
-  ctx.arc(t.x, headCY, 9.6, Math.PI * 1.25, Math.PI * 1.8);
+  ctx.arc(t.x, headCY, 9.6, Math.PI * 1.12, Math.PI * 1.88);
   ctx.stroke();
   ctx.strokeStyle = 'rgba(0,0,0,0.55)';
   ctx.lineWidth = 1.2;
@@ -2102,9 +2294,15 @@ function drawNoises(ctx, game) {
 
 // --- HUD ------------------------------------------------------------------
 
-function alarmWord(alarm) {
-  if (alarm >= ALARM_HOT) return 'ALERT!';
-  if (alarm >= 35) return 'SUSPICIOUS';
+// The HUD's state word is read off the ROOM, not off the alarm
+// number alone (v5.2): ALERT only while a guard is actually
+// chasing (or the alarm runs hot), SUSPICIOUS the moment any
+// guard's meter is filling or a guard is off investigating,
+// CALM only when nobody is detecting anything. The word can
+// never again say CALM over a guard who is staring at the thief.
+function alarmWord(game) {
+  if (game.guards.some((g) => g.state === 'converge') || game.alarm >= ALARM_HOT) return 'ALERT!';
+  if (game.guards.some((g) => (g.detect ?? 0) > 0.04 || g.state === 'investigate') || game.alarm >= 35) return 'SUSPICIOUS';
   return 'CALM';
 }
 
@@ -2130,13 +2328,16 @@ function drawHUD(ctx, game) {
   ctx.fillText('VELVET VAULT', 56, 41);
 
   // The alarm meter: gradient fill, glass highlight, tick marks.
+  // (v5.2: the band now carries two lines — the meter up top, the
+  // objective under it — so the hint text lives in the HUD and
+  // never piles onto the wall paintings again.)
   const mx = 300;
   const mw = 380;
-  const my = 31;
-  const mh = 19;
+  const my = 24;
+  const mh = 17;
   ctx.fillStyle = CREAM;
   ctx.font = '700 12.5px system-ui, sans-serif';
-  ctx.fillText('ALARM', mx, 24);
+  ctx.fillText('ALARM', mx, 19);
   ctx.fillStyle = '#0a0614';
   rr(ctx, mx - 2, my - 2, mw + 4, mh + 4, 5);
   ctx.fill();
@@ -2164,11 +2365,16 @@ function drawHUD(ctx, game) {
     ctx.lineTo(mx + (mw * i) / 10, my + mh - 2);
     ctx.stroke();
   }
-  ctx.fillStyle = game.alarm >= ALARM_HOT ? '#ff7a6b' : CREAM;
+  const word = alarmWord(game);
+  ctx.fillStyle = word === 'ALERT!' ? '#ff7a6b' : word === 'SUSPICIOUS' ? '#fbbf24' : CREAM;
   ctx.font = '700 13.5px system-ui, sans-serif';
-  ctx.fillText(`${Math.floor(game.alarm)}% — ${alarmWord(game.alarm)}`, mx + mw + 14, my + 15);
+  ctx.fillText(`${Math.floor(game.alarm)}% — ${word}`, mx + mw + 14, my + 14);
 
-  // Loot status, coins and the clock on the right.
+  // Loot status and the coin count on the right. The coins are
+  // labelled by what they DO — a tossed coin is a distraction —
+  // and the count-up clock is gone from the in-game HUD (it
+  // implied a limit that does not exist; the time still shows
+  // on the win and caught panels).
   ctx.textAlign = 'right';
   if (game.hasLoot) {
     ctx.fillStyle = '#7dd3fc';
@@ -2180,25 +2386,30 @@ function drawHUD(ctx, game) {
     ctx.fillText('◆ DIAMOND IN VAULT', VIEW_W - 24, 27);
   }
   ctx.fillStyle = CREAM;
-  ctx.font = '600 13px system-ui, sans-serif';
-  const mm = Math.floor(game.time / 60);
-  const ss = String(Math.floor(game.time % 60)).padStart(2, '0');
-  ctx.fillText(`COINS ●×${game.coins}    TIME ${mm}:${ss}`, VIEW_W - 24, 49);
-
-  // The current objective on a pill under the bar.
-  const text = game.objective;
-  ctx.font = '600 13px system-ui, sans-serif';
-  const w = ctx.measureText(text).width + 30;
-  ctx.fillStyle = 'rgba(10,6,16,0.82)';
-  rr(ctx, (VIEW_W - w) / 2, HUD_H + 8, w, 25, 12);
+  ctx.font = '700 13px system-ui, sans-serif';
+  const dtext = `DISTRACT ×${game.coins}`;
+  ctx.fillText(dtext, VIEW_W - 24, 49);
+  const dw = ctx.measureText(dtext).width;
+  const coinX = VIEW_W - 24 - dw - 13;
+  const cg2 = ctx.createRadialGradient(coinX - 1.5, 40.5, 0.5, coinX, 44, 6.4);
+  cg2.addColorStop(0, '#ffe9a8');
+  cg2.addColorStop(1, '#b98a2e');
+  ctx.fillStyle = cg2;
+  ctx.beginPath();
+  ctx.arc(coinX, 44, 6, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(217,164,65,0.4)';
+  ctx.strokeStyle = '#8a6d2f';
   ctx.lineWidth = 1;
-  rr(ctx, (VIEW_W - w) / 2, HUD_H + 8, w, 25, 12);
+  ctx.beginPath();
+  ctx.arc(coinX, 44, 3.1, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.fillStyle = CREAM;
+
+  // The objective, as the band's second line: larger, centred
+  // under the meter, inside the HUD — clear of the paintings.
+  ctx.fillStyle = word === 'ALERT!' ? '#ffb199' : CREAM;
+  ctx.font = '700 14px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText(text, VIEW_W / 2, HUD_H + 25);
+  ctx.fillText(game.objective, VIEW_W / 2, 58);
 }
 
 // --- End panels -------------------------------------------------------------
@@ -2353,6 +2564,7 @@ export function drawGame(ctx, game) {
   vg.addColorStop(1, 'rgba(3,2,9,0.30)');
   ctx.fillStyle = vg;
   ctx.fillRect(0, HUD_H, VIEW_W, VIEW_H - HUD_H);
+  drawExitMarker(ctx, game);
   drawHUD(ctx, game);
   if (game.notice && game.time < game.notice.until) {
     ctx.font = '700 17px system-ui, sans-serif';

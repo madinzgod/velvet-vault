@@ -98,6 +98,7 @@ export function makeGuard(def, index) {
     timer: 0,
     tx: x, ty: y,
     sees: 0,
+    detect: 0, // 0..1 certainty meter: fills in the cone, drains hidden
     range: GUARD_SIGHT.range,
     half: GUARD_SIGHT.half,
   };
@@ -117,6 +118,21 @@ export function updateGuard(guard, game, dt) {
   const { solids, thief } = game;
   guard.sees = detection(guard, thief, solids);
 
+  // The detection meter: while the thief stands in the cone the
+  // guard's certainty fills — fast when she is close and centred
+  // (sees near 1), slow at the fringe — and drains while she is
+  // hidden. A full meter is a certainty: the alarm jumps and the
+  // guard gives chase for as long as he holds the sight line.
+  const wasFull = guard.detect >= 1;
+  if (guard.sees > 0) {
+    guard.detect = Math.min(1, guard.detect + (guard.sees * dt) / 0.85);
+  } else {
+    guard.detect = Math.max(0, guard.detect - dt / 2.2);
+  }
+  if (guard.detect >= 1 && !wasFull) {
+    game.alarm = Math.min(96, game.alarm + 22);
+  }
+
   // While the thief is in view the guard tracks her with his eyes:
   // the cone follows the player, which is both tenser and fairer —
   // what you see sweeping toward you is exactly what can catch you.
@@ -124,7 +140,7 @@ export function updateGuard(guard, game, dt) {
     guard.facing = Math.atan2(thief.y - guard.y, thief.x - guard.x);
   }
 
-  if (game.alarm >= ALARM_HOT && guard.sees > 0) {
+  if ((game.alarm >= ALARM_HOT || guard.detect >= 1) && guard.sees > 0) {
     guard.state = 'converge';
     guard.tx = thief.x;
     guard.ty = thief.y;
@@ -211,6 +227,16 @@ export function updateAlarm(game, dt) {
   }
   game.peakAlarm = Math.max(game.peakAlarm, game.alarm);
   return game.alarm >= 100;
+}
+
+// How a guard reads at a glance — the renderer colours his cone
+// and his overhead readout by it: a calm patrol, a suspicion whose
+// meter is filling (or a guard off-route investigating), or a
+// chase in earnest.
+export function guardMood(guard) {
+  if (guard.state === 'converge') return 'chase';
+  if ((guard.detect ?? 0) > 0.04 || guard.state === 'investigate') return 'suspicious';
+  return 'patrol';
 }
 
 export function guardNearCatch(guard, thief, solids) {

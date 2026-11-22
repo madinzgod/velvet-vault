@@ -151,7 +151,10 @@ export function buildLevel() {
     guards,
     cameras,
     spawn: { x: 640, y: 706 },
-    exit: rect(577, 726, 126, 50, 'exit'),
+    // The exit doorway spans the carpet's full width and stands
+    // taller than it did: a door you can find at a glance, not a
+    // slot in the south wall.
+    exit: rect(565, 716, 150, 60, 'exit'),
     loot: { x: 968, y: 190, r: 16, name: 'The Aurora Diamond' },
     pedestal: rect(928, 182, 80, 64, 'pedestal'),
   };

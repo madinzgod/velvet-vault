@@ -170,6 +170,13 @@ function stageShot(name) {
     place(gA, 415, 252, Math.PI / 2);
     place(gB, 1040, 470, Math.PI / 2);
     place(gC, 960, 352, -0.5);
+    // v5.2: the hall guard is SUSPICIOUS, honestly staged — he
+    // caught movement at the case a moment ago, so his detection
+    // meter stands half full, his cone runs orange and the HUD
+    // word agrees (SUSPICIOUS, not CALM over a 12% alarm). The
+    // case still blocks his sight of the thief herself.
+    gA.state = 'investigate';
+    gA.detect = 0.55;
     camA.facing = 1.8;
     camB.facing = 2.6;
     game.objective = 'Wait for the cone to pass — the case is your cover';
@@ -184,6 +191,7 @@ function stageShot(name) {
     place(gC, 940, 355, Math.atan2(268 - 355, 968 - 940));
     gC.state = 'converge';
     gC.sees = 0.8;
+    gC.detect = 1; // his meter ran full at the grab — '!' and a full red bar
     camA.facing = 1.2;
     camB.facing = 2.75;
     game.objective = 'LOOT SECURED — get back to the EXIT!';
@@ -201,6 +209,12 @@ function stageShot(name) {
     place(gC, 955, 520, Math.atan2(738 - 520, 640 - 955));
     gA.state = 'converge';
     gB.state = 'converge';
+    gA.detect = 1;
+    gB.detect = 1;
+    // The third guard runs in suspicious — orange cone, meter
+    // climbing — so the shot set shows all three cone states.
+    gC.state = 'investigate';
+    gC.detect = 0.35;
     camA.facing = 1.4;
     camB.facing = 2.82;
     game.objective = 'LOOT SECURED — get back to the EXIT!';
